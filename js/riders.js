@@ -1,0 +1,608 @@
+import * as THREE from 'three';
+import { Body } from './body.js';
+import { SEATS, SLOTS, POLES, RAIL_SPOTS, DOOR_Z } from './layout.js';
+import { rng } from './ride.js';
+import { sfx } from './sfx.js';
+
+// The other passengers. Each one is seated, holding a pole slot, holding the
+// overhead rail, or walking somewhere. Pole slots open and close as riders
+// shift around: a slot that comes free is claimed by a standing rider after a
+// while (DIFFICULTY.claim), which is the window the player has to grab it.
+//
+// Every rider has an annoyance level from 0 to 1. Standing in their personal
+// space, bumping into them, blocking their way, sniping their pole and above
+// all sitting down (manspreading) raise it. They glare, grumble, then turn
+// hostile. The car's mood is the average of the most annoyed riders.
+
+export const LINES = {
+  grumble: ['ugh.', '...seriously?', 'personal space, pal', 'can you not', 'bro.', 'back up a little?',
+    'mmhm. okay.', 'every. single. day.', 'you mind?', 'too close, man', 'excuse YOU'],
+  bump: ['WATCH IT!', 'HOLD ON TO SOMETHING!', 'YO!', 'MY COFFEE!', 'OW!', 'ARE YOU NEW HERE?', 'HEY!'],
+  sit: ['IS THAT MANSPREADING?', 'Close your legs, my guy', 'GET ON THAT POLE!', 'Get. On. That. POLE.',
+    'Two seats? Really?', "Pole's RIGHT THERE!", 'That is a WHOLE bench, sir', 'GET ON THAT POLE!!',
+    'Manspreading. Classic.', 'Sir. The POLE.', 'GET ON THAT POLE', 'Legs. Together. Now.'],
+  block: ['excuse me', 'this is my stop!', 'MOVE!', 'coming through', 'door is RIGHT there'],
+  sniped: ['I was going for that', 'wow. okay.', '...cool. cool cool.', 'really?'],
+  hostile: ['I swear to god', 'TOURIST.', 'Get on that pole or get off the train', 'Somebody film this guy', 'unbelievable'],
+  praise: ['nice.', "now THAT's a New Yorker", 'respect.', 'look at him go'],
+};
+
+const WALK_SPEED = 1.1;
+const LINE_COOLDOWN = 6;
+const _v = new THREE.Vector3(), _w = new THREE.Vector3();
+
+class Rider {
+  constructor(id, body, rand) {
+    this.id = id;
+    this.body = body;
+    this.voice = 110 + rand() * 260;
+    this.base = new THREE.Vector3();
+    this.offset = { x: 0, z: 0 };
+    this.mode = 'seated';
+    this.annoyance = 0;
+    this.cooldown = rand() * 3;
+    this.theta = 0;
+    this.omega = 0;
+    this.point = 0; // seconds left pointing at a pole
+    this.phone = rand() < 0.5;
+    this.spread = rand() < 0.12;
+    this.hand = rand() < 0.5 ? 0 : 1;
+    this.stiff = 0.8 + rand() * 0.6;
+    this.path = [];
+    this.wait = 0;
+  }
+
+  get solid() {
+    return this.mode !== 'gone' && this.mode !== 'platform';
+  }
+
+  nudge(dx, dz) {
+    this.offset.x = THREE.MathUtils.clamp(this.offset.x + dx, -0.3, 0.3);
+    this.offset.z = THREE.MathUtils.clamp(this.offset.z + dz, -0.3, 0.3);
+  }
+}
+
+export class Riders {
+  constructor(scene, diff, seed = 1) {
+    this.scene = scene;
+    this.diff = diff;
+    this.rand = rng(seed);
+    this.list = [];
+    this.bubbles = [];
+    this.slots = SLOTS.map(() => ({ occupant: null, reservedBy: null, claimAt: Infinity, freeSince: 0 }));
+    this.seats = SEATS.map(() => null);
+    this.rails = RAIL_SPOTS.map(() => null);
+    this.time = 0;
+    this.playerSeat = null;
+    this.chorusT = 1;
+    this.lastLine = 0;
+    this.lines = 0; // lines aimed at the player
+    this.highlight = null;
+    this.group = new THREE.Group();
+    scene.add(this.group);
+    this.markers = this.makeMarkers();
+    this.spawn();
+  }
+
+  dispose() {
+    this.scene.remove(this.group);
+  }
+
+  range([a, b]) {
+    return a + this.rand() * (b - a);
+  }
+
+  add(body) {
+    const r = new Rider(this.list.length, body, this.rand);
+    this.list.push(r);
+    this.group.add(body.root);
+    return r;
+  }
+
+  spawn() {
+    const rand = this.rand, d = this.diff;
+    const seatIds = shuffle(SEATS.map((s) => s.id), rand).slice(0, Math.min(d.seated, SEATS.length - 1));
+    for (const id of seatIds) this.sitAt(this.add(new Body(rand)), SEATS[id]);
+    const standing = d.standing;
+    const onPoles = Math.min(SLOTS.length - 6, Math.round(standing * 0.65));
+    const slotIds = shuffle(SLOTS.map((s) => s.id), rand);
+    for (let i = 0; i < standing; i++) {
+      const r = this.add(new Body(rand));
+      if (i < onPoles) this.holdAt(r, SLOTS[slotIds[i]]);
+      else {
+        const spot = this.freeRail();
+        if (spot) this.railAt(r, spot);
+        else this.holdAt(r, SLOTS[slotIds[i]]);
+      }
+    }
+    this.slots.forEach((st) => this.freed(st));
+    // A few people waiting on the platform at Queensboro Plaza board with you.
+    this.boarders = [];
+    for (let i = 0; i < 3; i++) {
+      const r = this.add(new Body(rand));
+      r.mode = 'platform';
+      r.base.set(3 + rand() * 3, 0, DOOR_Z[1 + (i % 2)] + (rand() - 0.5) * 3);
+      r.yaw = -Math.PI / 2;
+      r.body.pose('stand');
+      r.delay = 1 + i * 1.5 + rand();
+      this.boarders.push(r);
+    }
+    for (const r of this.list) this.place(r, 0, true);
+  }
+
+  freeRail() {
+    const free = RAIL_SPOTS.filter((s) => !this.rails[s.id]);
+    return free.length ? free[Math.floor(this.rand() * free.length)] : null;
+  }
+
+  sitAt(r, seat) {
+    r.mode = 'seated';
+    r.seat = seat;
+    this.seats[seat.id] = r;
+    r.base.set(seat.x, 0, seat.z);
+    r.yaw = seat.yaw;
+  }
+
+  holdAt(r, slot) {
+    const st = this.slots[slot.id];
+    st.occupant = r;
+    st.reservedBy = null;
+    st.claimAt = Infinity;
+    r.mode = 'pole';
+    r.slot = slot;
+    r.stay = this.range(this.diff.stay);
+    r.base.set(slot.x, 0, slot.z);
+    const pole = POLES[slot.pole];
+    r.yaw = Math.atan2(pole.x - slot.x, pole.z - slot.z) + (this.rand() - 0.5) * 1.2;
+  }
+
+  railAt(r, spot) {
+    r.mode = 'rail';
+    r.spot = spot;
+    this.rails[spot.id] = r;
+    r.base.set(spot.x, 0, spot.z);
+    r.yaw = spot.side > 0 ? Math.PI / 2 : -Math.PI / 2;
+    r.idleSince = this.time;
+  }
+
+  // A slot just came free: some standing rider will go for it in a while.
+  freed(st) {
+    if (st.occupant || st.reservedBy) return;
+    st.freeSince = this.time;
+    st.claimAt = this.time + this.range(this.diff.claim);
+  }
+
+  leaveSpot(r) {
+    if (r.mode === 'seated' && r.seat) this.seats[r.seat.id] = null;
+    if (r.mode === 'rail' && r.spot) this.rails[r.spot.id] = null;
+    if (r.mode === 'pole' && r.slot) {
+      const st = this.slots[r.slot.id];
+      st.occupant = null;
+      this.freed(st);
+    }
+    r.seat = r.spot = r.slot = null;
+  }
+
+  // Walk a list of points, then call done.
+  walk(r, points, done) {
+    r.mode = 'walk';
+    r.path = points.map((p) => new THREE.Vector3(p.x, 0, p.z));
+    r.done = done;
+    r.wait = 0;
+  }
+
+  // Through the aisle: out to the middle, along, then in.
+  aislePath(from, to) {
+    const ax = (x) => THREE.MathUtils.clamp(x, -0.25, 0.25);
+    return [{ x: ax(from.x), z: from.z }, { x: ax(to.x), z: to.z }, to];
+  }
+
+  // ---- what the player does ----
+
+  playerTakes(slot) {
+    const st = this.slots[slot.id];
+    const r = st.reservedBy;
+    if (r) {
+      this.say(r, pick(LINES.sniped, this.rand), true);
+      this.annoy(r, 0.25);
+      const spot = this.freeRail();
+      if (spot) {
+        this.rails[spot.id] = r;
+        this.walk(r, this.aislePath(r.base, spot), () => this.railAt(r, spot));
+      }
+    }
+    st.occupant = 'player';
+    st.reservedBy = null;
+    st.claimAt = Infinity;
+  }
+
+  playerLeaves(slot) {
+    const st = this.slots[slot.id];
+    st.occupant = null;
+    this.freed(st);
+  }
+
+  playerSits(seat) {
+    this.seats[seat.id] = 'player';
+    this.playerSeat = seat;
+    this.chorusT = 0.4;
+  }
+
+  playerStands(seat) {
+    if (seat) this.seats[seat.id] = null;
+    this.playerSeat = null;
+  }
+
+  // You walked or stumbled into r.
+  contact(r, strength) {
+    if (strength >= 1) {
+      this.annoy(r, 0.4 * this.diff.temper);
+      this.say(r, pick(LINES.bump, this.rand), true, true);
+      sfx.thump();
+    } else {
+      this.annoy(r, 0.08 * this.diff.temper);
+      if (r.annoyance > 0.3) this.say(r, pick(LINES.grumble, this.rand));
+    }
+  }
+
+  // You rode out a jolt on the pole: someone might be impressed.
+  praise(player) {
+    const near = this.list.filter((r) => r.solid && r.annoyance < 0.3 && dist(r.base, player.pos) < 3);
+    if (near.length && this.rand() < 0.35) this.say(pick(near, this.rand), pick(LINES.praise, this.rand), false, true);
+  }
+
+  annoy(r, amount) {
+    r.annoyance = Math.min(1, r.annoyance + amount);
+    r.glare = Math.max(r.glare || 0, 2.5);
+  }
+
+  // force: speak even within the cooldown. Returns whether it was said.
+  say(r, text, loud = false, force = false) {
+    if (!force && (r.cooldown > 0 || this.time - this.lastLine < 0.9)) return false;
+    r.cooldown = LINE_COOLDOWN * (0.7 + this.rand() * 0.6);
+    this.lastLine = this.time;
+    this.bubbles = this.bubbles.filter((b) => b.rider !== r);
+    this.bubbles.push({ rider: r, text, t: 0, life: 2 + text.length * 0.05, loud });
+    if (!LINES.praise.includes(text)) this.lines++;
+    sfx.mumble(r.voice, Math.min(6, 2 + Math.floor(text.length / 6)), loud);
+    return true;
+  }
+
+  // ---- stations ----
+
+  // Queensboro Plaza: the people on the platform get on.
+  board(dt) {
+    for (const r of this.boarders) {
+      if (r.mode !== 'platform') continue;
+      r.delay -= dt;
+      if (r.delay > 0) continue;
+      const door = nearestDoor(r.base.z);
+      const spot = this.freeRail();
+      if (!spot) continue;
+      this.rails[spot.id] = r;
+      this.walk(r, [{ x: 1.0, z: door }, { x: 0.2, z: door }, ...this.aislePath({ x: 0.2, z: door }, spot)], () => this.railAt(r, spot));
+    }
+  }
+
+  // Lexington Av: some riders get off through the doors on `side`.
+  alight(side) {
+    for (const r of this.list) {
+      if (!r.solid || r.mode === 'walk' || this.rand() > 0.45) continue;
+      r.exitDelay = this.rand() * 4;
+      r.exitSide = side;
+    }
+  }
+
+  startExit(r) {
+    const door = nearestDoor(r.base.z);
+    const s = r.exitSide;
+    const from = r.mode === 'seated' ? r.seat.front : r.base.clone();
+    this.leaveSpot(r);
+    const out = [
+      { x: THREE.MathUtils.clamp(from.x, -0.3, 0.3), z: from.z },
+      { x: 0, z: door },
+      { x: s * 1.0, z: door },
+      { x: s * 2.6, z: door },
+      { x: s * 4.5, z: door + (this.rand() - 0.5) * 16 },
+    ];
+    this.walk(r, out, () => {
+      r.mode = 'gone';
+      r.body.root.visible = false;
+    });
+    r.exiting = true;
+  }
+
+  // ---- per frame ----
+
+  // ctx: { dt, player, a, shake, aboard, doorsOpen }
+  update(ctx) {
+    const { dt, player } = ctx;
+    this.time += dt;
+    const d = this.diff;
+    const head = player.camera.position;
+    const R = d.space;
+
+    // Free slots get claimed when their window runs out.
+    this.slots.forEach((st, id) => {
+      if (st.occupant || st.reservedBy || this.time < st.claimAt) return;
+      const slot = SLOTS[id];
+      let best = null, bestD = Infinity;
+      for (const r of this.list) {
+        if (r.mode !== 'rail' || this.time - r.idleSince < 2) continue;
+        const dd = dist(r.base, slot);
+        if (dd < bestD) {
+          best = r;
+          bestD = dd;
+        }
+      }
+      if (!best) {
+        st.claimAt = this.time + this.range(d.claim);
+        return;
+      }
+      st.reservedBy = best;
+      this.rails[best.spot.id] = null;
+      const r = best;
+      this.walk(r, this.aislePath(r.base, slot), () => {
+        if (st.occupant) { // the player got there first
+          const spot = this.freeRail();
+          if (spot) this.railAt(r, spot);
+          else this.holdAt(r, SLOTS.find((s) => !this.slots[s.id].occupant && !this.slots[s.id].reservedBy) || slot);
+          return;
+        }
+        this.holdAt(r, slot);
+      });
+    });
+
+    // The sitting chorus: while you sit, someone yells at you every so often.
+    if (this.playerSeat) {
+      this.chorusT -= dt;
+      if (this.chorusT <= 0) {
+        this.chorusT = 1.2 + this.rand() * 1.4 / d.temper;
+        const near = this.list.filter((r) => r.solid && dist(r.base, player.pos) < 5 && r.cooldown <= 0)
+          .sort((p, q) => dist(p.base, player.pos) - dist(q.base, player.pos)).slice(0, 6);
+        if (near.length) {
+          const r = pick(near, this.rand);
+          this.say(r, pick(LINES.sit, this.rand), true, true);
+          r.point = 2.2;
+          this.annoy(r, 0.05);
+        }
+      }
+    }
+
+    for (const r of this.list) {
+      if (r.mode === 'gone') continue;
+      r.cooldown -= dt;
+      r.glare = Math.max(0, (r.glare || 0) - dt);
+      r.point = Math.max(0, r.point - dt);
+
+      if (r.exitDelay !== undefined && !r.exiting) {
+        r.exitDelay -= dt;
+        if (r.exitDelay <= 0 && r.mode !== 'walk') this.startExit(r);
+      }
+
+      if (r.mode === 'pole') {
+        r.stay -= dt;
+        if (r.stay <= 0) this.shift(r);
+      }
+      if (r.mode === 'walk') this.step(r, ctx);
+
+      // Annoyance from the player being here.
+      if (ctx.aboard && r.solid) {
+        const dd = dist(r.base, player.pos);
+        let rate = 0;
+        if (dd < R && player.mode !== 'sit') rate += 0.3 * (1 - dd / R) * (r.mode === 'seated' ? 0.5 : 1);
+        if (this.playerSeat) {
+          if (dd < 4.5) rate += 0.05;
+          if (r.mode === 'seated') {
+            // Your knees are in your neighbors' seats, and in the face of
+            // whoever sits across from you in a bay.
+            const ds = dist(r.seat, this.playerSeat);
+            if (ds < 0.8) rate += 0.22;
+            else if (r.seat.kind === 'cross' && this.playerSeat.kind === 'cross' && ds < 1.4) rate += 0.15;
+          }
+        }
+        if (rate) {
+          const before = r.annoyance;
+          r.annoyance = Math.min(1, r.annoyance + rate * d.temper * dt);
+          if (before < 0.4 && r.annoyance >= 0.4) this.say(r, pick(LINES.grumble, this.rand));
+          if (before < 0.85 && r.annoyance >= 0.85) this.say(r, pick(LINES.hostile, this.rand), true);
+          if (r.annoyance > 0.25) r.glare = Math.max(r.glare, 0.5);
+        } else r.annoyance = Math.max(0, r.annoyance - 0.025 * dt);
+      }
+
+      this.place(r, dt, false, ctx, head);
+    }
+
+    for (const b of this.bubbles) b.t += dt;
+    this.bubbles = this.bubbles.filter((b) => b.t < b.life && b.rider.mode !== 'gone');
+    this.updateMarkers(dt);
+  }
+
+  // A pole rider's time is up: move to another free slot or to the rail.
+  shift(r) {
+    const here = r.slot;
+    const free = SLOTS.filter((s) => !this.slots[s.id].occupant && !this.slots[s.id].reservedBy && s.pole !== here.pole
+      && Math.abs(s.z - here.z) < 6);
+    this.leaveSpot(r);
+    if (free.length && this.rand() < 0.4) {
+      const slot = pick(free, this.rand);
+      const st = this.slots[slot.id];
+      st.reservedBy = r;
+      this.walk(r, this.aislePath(r.base, slot), () => {
+        if (st.occupant) {
+          const spot = this.freeRail();
+          if (spot) this.railAt(r, spot);
+          else this.holdAt(r, here);
+          return;
+        }
+        this.holdAt(r, slot);
+      });
+      return;
+    }
+    const spot = this.freeRail();
+    if (spot) {
+      this.rails[spot.id] = r;
+      this.walk(r, this.aislePath(r.base, spot), () => this.railAt(r, spot));
+    } else this.holdAt(r, here);
+  }
+
+  // Walk toward the next point, waiting (and grumbling) if the player is in the way.
+  step(r, ctx) {
+    const target = r.path[0];
+    if (!target) {
+      const done = r.done;
+      r.done = null;
+      if (done) done();
+      return;
+    }
+    const dx = target.x - r.base.x, dz = target.z - r.base.z;
+    const len = Math.hypot(dx, dz);
+    const p = ctx.player.pos;
+    const ahead = ((p.x - r.base.x) * dx + (p.z - r.base.z) * dz) / (len || 1);
+    const off = Math.abs((p.x - r.base.x) * dz - (p.z - r.base.z) * dx) / (len || 1);
+    // Someone on a pole or in a seat is squeezed past. Someone standing in the
+    // aisle, or in the way of the doors at Lex, is in the way.
+    const parked = ctx.player.mode === 'hold' || ctx.player.mode === 'sit';
+    r.shove = Math.max(0, (r.shove || 0) - ctx.dt);
+    const blocked = ctx.aboard && !r.shove && (!parked || r.exiting) && ahead > 0 && ahead < 0.6 && off < 0.4;
+    if (blocked) {
+      r.wait += ctx.dt;
+      r.annoyance = Math.min(1, r.annoyance + 0.3 * this.diff.temper * ctx.dt);
+      if (r.wait > 0.6 && !r.complained) r.complained = this.say(r, pick(LINES.block, this.rand), r.exiting);
+      r.glare = 1;
+      if (r.wait > 2.5) r.shove = 1.5; // give up waiting and shove past
+      return;
+    }
+    r.wait = 0;
+    r.complained = false;
+    const stepLen = WALK_SPEED * ctx.dt;
+    if (len <= stepLen) {
+      r.base.set(target.x, 0, target.z);
+      r.path.shift();
+    } else {
+      r.base.x += (dx / len) * stepLen;
+      r.base.z += (dz / len) * stepLen;
+      r.yaw = Math.atan2(dx, dz);
+    }
+  }
+
+  // Pose the body: where it is, how it holds on, where it looks, and how it
+  // sways with the train.
+  place(r, dt, snap = false, ctx = null, head = null) {
+    const b = r.body;
+    const a = ctx ? ctx.a : 0;
+    const shake = ctx ? ctx.shake : { x: 0, y: 0 };
+    if (dt) {
+      const k = r.mode === 'seated' ? 25 : 12 * r.stiff;
+      const acc = -k * r.theta - 6 * r.omega - 0.45 * a;
+      r.omega += acc * dt;
+      r.theta += r.omega * dt;
+      const decay = Math.exp(-dt / 0.6);
+      r.offset.x *= decay;
+      r.offset.z *= decay;
+    }
+    b.position.set(r.base.x + r.offset.x, 0, r.base.z + r.offset.z);
+    b.yaw = r.yaw || 0;
+    b.reach(0, null);
+    b.reach(1, null);
+    if (r.mode === 'seated') {
+      b.pose(r.spread ? 'spread' : 'sit', { phone: r.phone && !r.glare });
+      b.lean(r.theta * 0.4, shake.x * 0.006);
+    } else if (r.mode === 'pole') {
+      b.pose(r.phone ? 'phone' : 'hold');
+      const pole = POLES[r.slot.pole];
+      b.reach(r.hand, _v.set(pole.x, r.slot.hand, pole.z));
+      b.lean(r.theta, shake.x * 0.008);
+    } else if (r.mode === 'rail') {
+      b.pose(r.phone ? 'phone' : 'stand');
+      b.reach(r.hand, _v.set(Math.sign(r.spot.x) * 0.55, 1.94, r.base.z + 0.1));
+      b.lean(r.theta, shake.x * 0.008);
+    } else if (r.mode === 'walk') {
+      b.pose(r.wait > 0 ? 'stand' : 'walk');
+      b.lean(r.theta, 0);
+    } else {
+      b.pose('stand');
+      b.lean(0, 0);
+    }
+    if (r.point > 0 && head) {
+      // Point at the nearest pole, arm out straight.
+      let best = POLES[0], bd = Infinity;
+      for (const p of POLES) {
+        const dd = Math.hypot(p.x - r.base.x, p.z - r.base.z);
+        if (dd < bd) {
+          best = p;
+          bd = dd;
+        }
+      }
+      b.headWorld(_w);
+      _v.set(best.x, 1.5, best.z).sub(_w).normalize().multiplyScalar(3).add(_w);
+      b.reach(1 - r.hand, _v);
+    }
+    b.look((r.glare > 0 || r.point > 0) && head ? head : null);
+    if (snap) b.snap();
+    else b.update(dt);
+  }
+
+  // The car's mood: the average annoyance of its six most annoyed riders.
+  mood() {
+    const vals = this.list.filter((r) => r.solid).map((r) => r.annoyance).sort((p, q) => q - p).slice(0, 6);
+    while (vals.length < 6) vals.push(0);
+    return vals.reduce((s, v) => s + v, 0) / 6;
+  }
+
+  // Gold rings on the floor at free slots, shrinking as a rider closes in.
+  // Red when a rider is already on the way; white for the one SPACE would grab.
+  makeMarkers() {
+    const geo = new THREE.RingGeometry(0.13, 0.19, 12);
+    geo.rotateX(-Math.PI / 2);
+    const bandGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.08, 8);
+    return SLOTS.map((slot) => {
+      const mat = new THREE.MeshBasicMaterial({ color: '#ffd34d', transparent: true, opacity: 0.9, depthWrite: false });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.position.set(slot.x, 0.012, slot.z);
+      const band = new THREE.Mesh(bandGeo, mat);
+      const pole = POLES[slot.pole];
+      band.position.set(pole.x, slot.hand, pole.z);
+      this.group.add(ring, band);
+      return { ring, band, mat };
+    });
+  }
+
+  updateMarkers() {
+    const pulse = 0.85 + 0.15 * Math.sin(this.time * 8);
+    SLOTS.forEach((slot, i) => {
+      const st = this.slots[i], m = this.markers[i];
+      m.ring.visible = m.band.visible = !!this.showMarkers && !st.occupant;
+      if (!m.ring.visible) return;
+      let s = 1;
+      if (st.reservedBy) {
+        m.mat.color.set('#ff5a4a');
+        s = 0.6;
+      } else {
+        m.mat.color.set(this.highlight === slot ? '#ffffff' : '#ffd34d');
+        if (Number.isFinite(st.claimAt)) s = 0.45 + 0.55 * THREE.MathUtils.clamp((st.claimAt - this.time) / Math.max(1, st.claimAt - st.freeSince), 0, 1);
+      }
+      m.ring.scale.setScalar(s * (this.highlight === slot ? pulse * 1.2 : 1));
+    });
+  }
+}
+
+function nearestDoor(z) {
+  return DOOR_Z.reduce((best, d) => (Math.abs(d - z) < Math.abs(best - z) ? d : best), DOOR_Z[0]);
+}
+
+function dist(p, q) {
+  return Math.hypot(p.x - q.x, p.z - q.z);
+}
+
+function pick(list, rand) {
+  return list[Math.floor(rand() * list.length)];
+}
+
+function shuffle(list, rand) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+}

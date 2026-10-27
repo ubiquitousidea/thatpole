@@ -1,0 +1,65 @@
+:root {
+  --px: 3px;
+  --ink: #10132a;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #04050c;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The pixelation: every canvas is rendered at 1/PX resolution and scaled up
+   with nearest-neighbour sampling. */
+canvas {
+  position: fixed;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+#scene { touch-action: none; }
+#hud { pointer-events: none; }
+
+/* Buttons live in the DOM, above the canvases, and stay crisp. */
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+#btnbar {
+  position: absolute;
+  display: flex;
+  gap: calc(var(--px) * 3);
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  max-width: 90vw;
+}
+#action { position: absolute; }
+#action[hidden] { display: none; }
+
+.btn {
+  pointer-events: auto;
+  font-family: 'Press Start 2P', monospace;
+  font-size: max(11px, calc(var(--px) * 4.5));
+  line-height: 1;
+  color: var(--ink);
+  background: #fccc0a;
+  border: max(3px, var(--px)) solid var(--ink);
+  border-radius: 0;
+  padding: 0.75em 1em;
+  box-shadow: 0 calc(var(--px) * 1.5) 0 var(--ink), inset calc(var(--px) * -1) calc(var(--px) * -1) 0 rgba(0, 0, 0, 0.2), inset var(--px) var(--px) 0 rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: transform 0.05s;
+  touch-action: manipulation;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:active:not(:disabled) { transform: translateY(var(--px)); box-shadow: 0 calc(var(--px) * 0.5) 0 var(--ink); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.ghost { background: #cfd6ff; }
+.btn.action { background: #ffffff; }
