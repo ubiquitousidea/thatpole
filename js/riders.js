@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Body } from './body.js';
-import { SEATS, SLOTS, POLES, RAIL_SPOTS, DOOR_Z } from './layout.js';
+import { SEATS, SLOTS, POLES, RAIL_SPOTS, DOOR_Z, RAIL_Y } from './layout.js';
 import { rng } from './ride.js';
 import { sfx } from './sfx.js';
 
@@ -10,7 +10,7 @@ import { sfx } from './sfx.js';
 // when no seat they'll take is free (picky riders won't sit right next to
 // someone). Once seated they stay put. A pole slot that comes free is claimed
 // by a nearby rail rider who gave up on a seat after a while
-// (DIFFICULTY.claim), which is the window the player has to grab it.
+// (TIMES.claim in settings.js), which is the window the player has to grab it.
 //
 // Every rider has an annoyance level from 0 to 1. Standing in their personal
 // space, bumping into them, blocking their way, sniping their pole and above
@@ -50,7 +50,7 @@ const THINK_NEAR = 5;         // thoughts you can see: riders this close to you
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 
 // Seats right next to each seat: along the same wall bench, or the other seat
-// of the same cross row. Facing rows don't count.
+// of the same pod row. The row behind, back to back, doesn't count.
 const NEIGHBORS = SEATS.map((s) => SEATS.filter((q) => q !== s && q.side === s.side && q.kind === s.kind
   && (s.kind === 'wall' || q.z === s.z) && Math.hypot(q.x - s.x, q.z - s.z) < 0.8));
 
@@ -306,7 +306,7 @@ export class Riders {
   // You walked or stumbled into r.
   contact(r, strength) {
     if (strength >= 1) {
-      this.annoy(r, 0.4 * this.diff.temper);
+      this.annoy(r, 0.4 * this.diff.temper * this.diff.bump);
       this.say(r, pick(LINES.bump, this.rand), true, true);
       sfx.thump();
     } else {
@@ -498,15 +498,17 @@ export class Riders {
       if (ctx.aboard && r.solid) {
         const dd = dist(r.base, player.pos);
         let rate = 0;
-        if (dd < R && player.mode !== 'sit') rate += 0.3 * (1 - dd / R) * (r.mode === 'seated' ? 0.5 : 1);
+        // Holding a pole is where you belong, however packed the car: only
+        // standing loose (or stumbling) in someone's space counts.
+        const loose = player.mode === 'walk' || player.mode === 'stumble';
+        if (dd < R && loose) rate += 0.3 * (1 - dd / R) * (r.mode === 'seated' ? 0.5 : 1);
         if (this.playerSeat) {
           if (dd < 4.5) rate += 0.05;
           if (r.mode === 'seated') {
-            // Your knees are in your neighbors' seats, and in the face of
-            // whoever sits across from you in a bay.
-            const ds = dist(r.seat, this.playerSeat);
-            if (ds < 0.8) rate += 0.22;
-            else if (r.seat.kind === 'cross' && this.playerSeat.kind === 'cross' && ds < 1.4) rate += 0.15;
+            // Your knees are in your neighbors' seats, and in the way of
+            // whoever sits right behind or beside you.
+            if (NEIGHBORS[this.playerSeat.id].includes(r.seat)) rate += 0.22;
+            else if (dist(r.seat, this.playerSeat) < 0.8) rate += 0.15;
           }
         }
         if (rate) {
@@ -596,7 +598,7 @@ export class Riders {
       b.lean(r.theta, shake.x * 0.008);
     } else if (r.mode === 'rail') {
       b.pose(r.phone ? 'phone' : 'stand');
-      b.reach(r.hand, _v.set(Math.sign(r.spot.x) * 0.55, 1.94, r.base.z + 0.1));
+      b.reach(r.hand, _v.set(Math.sign(r.spot.x) * 0.55, RAIL_Y + 0.02, r.base.z + 0.1));
       b.lean(r.theta, shake.x * 0.008);
     } else if (r.mode === 'walk') {
       b.pose(r.wait > 0 ? 'stand' : 'walk');

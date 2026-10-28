@@ -2,7 +2,7 @@ import { Riders } from './riders.js';
 import { buildRide, PORTAL, RIVER } from './ride.js';
 import { walkRects, CAR, DOOR_Z } from './layout.js';
 import { QBP_PLATFORM, LEX_PLATFORM } from './route.js';
-import { DIFFICULTY } from './settings.js';
+import { TIMES } from './settings.js';
 import { sfx } from './sfx.js';
 
 // States: title -> board (walk on at Queensboro Plaza) -> ride -> arrive (get
@@ -16,8 +16,9 @@ const MOOD_LIMIT = 0.92;   // the car turns on you
 const QBP_SIDE = 1, LEX_SIDE = -1;
 
 const INTRO = [
-  "Queensboro Plaza, lower level. Your Manhattan-bound N is in, and it's packed. You need to get to Lexington Av/59 St.",
+  "Queensboro Plaza, a weekday morning in September. Your Manhattan-bound N is in. You need to get to Lexington Av/59 St.",
   "New York has rules. Do NOT sit and spread your knees across two seats. Stand. Hold a pole. Don't crowd anyone. Ride out the jolts.",
+  'What time do you get to the platform? The rush peaks at 8 AM, when the car is packed and every pole is taken. 7 and 9 are easier.',
 ];
 
 export class Game {
@@ -27,7 +28,7 @@ export class Game {
     this.hud = hud;
     this.ui = ui;
     this.touch = window.matchMedia('(pointer: coarse)').matches;
-    this.diffKey = 'normal';
+    this.timeKey = 8; // when you get to the platform: a TIMES key
     this.seed = 1;
     this.extra = []; // debug jolts: { t, amp }
     player.onPress = () => this.press();
@@ -46,8 +47,9 @@ export class Game {
   // ---- setup ----
 
   setup(key) {
-    this.diffKey = key;
-    this.diff = DIFFICULTY[key];
+    this.timeKey = key;
+    this.diff = TIMES[key];
+    this.world.setTime(this.diff.hour);
     this.seed = (this.seed * 7919 + 13) % 100000;
     this.ride = buildRide(this.diff, this.seed);
     if (this.riders) this.riders.dispose();
@@ -68,19 +70,18 @@ export class Game {
   }
 
   start(key) {
-    this.setup(key || this.diffKey);
+    this.setup(key || this.timeKey);
     this.board();
   }
 
   title() {
     this.state = 'title';
-    this.setup(this.diffKey);
+    this.setup(this.timeKey);
     this.player.active = false;
     sfx.engine.silence();
-    this.narrate(INTRO, Object.entries(DIFFICULTY).map(([key, d]) => ({
+    this.narrate(INTRO, Object.entries(TIMES).map(([key, d]) => ({
       label: d.label,
-      kind: key === 'normal' ? '' : 'ghost',
-      onClick: () => this.choose(key),
+      onClick: () => this.choose(+key),
     })));
   }
 
@@ -367,7 +368,7 @@ export class Game {
     this.ui.setAction(null);
     this.ui.setSeat(null);
     this.narrate([TEXT[how]], [
-      { label: 'Ride again', onClick: () => this.start(this.diffKey) },
+      { label: 'Ride again', onClick: () => this.start(this.timeKey) },
       { label: 'Menu', kind: 'ghost', onClick: () => this.title() },
     ]);
   }
@@ -376,7 +377,7 @@ export class Game {
 
   // Jump to a point on the ride with the player standing in the aisle.
   skipTo(where) {
-    if (this.state === 'title' || this.state === 'end') this.start(this.diffKey);
+    if (this.state === 'title' || this.state === 'end') this.start(this.timeKey);
     const U = { ride: 0, elevated: 120, tunnel: PORTAL + 30, river: RIVER.u0 + 20, lex: 1300 }[where] ?? 0;
     if (this.player.mode === 'hold') this.player.letGo(this.riders);
     if (!this.player.aboard) this.player.pos.set(0, 0, 0);

@@ -98,19 +98,35 @@ export function std(color, roughness = 0.8, metalness = 0, extra = {}) {
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 // A box from corner ranges: box(parent, mat, [x0, x1], [y0, y1], [z0, z1]).
-export function box(parent, material, xr, yr, zr) {
-  const m = new THREE.Mesh(UNIT_BOX, material);
-  m.scale.set(Math.abs(xr[1] - xr[0]), Math.abs(yr[1] - yr[0]), Math.abs(zr[1] - zr[0]));
+// opts.tile: repeat a texture once per this many meters on every face, instead
+// of stretching it once over each face.
+export function box(parent, material, xr, yr, zr, opts = {}) {
+  const w = Math.abs(xr[1] - xr[0]), h = Math.abs(yr[1] - yr[0]), d = Math.abs(zr[1] - zr[0]);
+  const m = new THREE.Mesh(opts.tile ? tiledBox(w, h, d, opts.tile) : UNIT_BOX, material);
+  m.scale.set(w, h, d);
   m.position.set((xr[0] + xr[1]) / 2, (yr[0] + yr[1]) / 2, (zr[0] + zr[1]) / 2);
   parent.add(m);
   return m;
 }
 
-// A textured rectangle facing +z (rotate it to face elsewhere).
+// A unit box whose UVs run in meters / tile for a w x h x d box. BoxGeometry
+// lays out its faces in the order +x, -x, +y, -y, +z, -z, four vertices each.
+function tiledBox(w, h, d, tile) {
+  const geo = UNIT_BOX.clone();
+  const uv = geo.attributes.uv;
+  const faces = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  faces.forEach(([su, sv], f) => {
+    for (let i = f * 4; i < f * 4 + 4; i++) uv.setXY(i, (uv.getX(i) * su) / tile, (uv.getY(i) * sv) / tile);
+  });
+  return geo;
+}
+
+// A textured rectangle facing +z (rotate it to face elsewhere). opts.material
+// shares one material between panels, so mergeStatic bakes them together.
 export function panel(parent, tex, w, h, opts = {}) {
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(w, h),
-    opts.basic ? new THREE.MeshBasicMaterial({ map: tex }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, ...opts.mat }),
+    opts.material || (opts.basic ? new THREE.MeshBasicMaterial({ map: tex }) : new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7, ...opts.mat })),
   );
   parent.add(m);
   return m;
