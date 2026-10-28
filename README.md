@@ -4,7 +4,9 @@ A small first-person browser game about riding the Manhattan-bound N train from 
 
 ## Play
 
-There's no build step. Serve the folder and open it:
+Play it online at **https://ubiquitousidea.github.io/thatpole/**, published by GitHub Pages from `main`. It's served over HTTPS, so tilt controls work on phones.
+
+To run it locally there's no build step. Serve the folder and open it:
 
 ```sh
 python3 -m http.server 8000   # then visit http://localhost:8000
