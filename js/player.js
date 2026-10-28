@@ -26,7 +26,8 @@ const REACH = 0.8;        // to a slot's standing spot
 const SIT_REACH = 0.95;
 const PLAYER_GRIP = 1.72; // hand height on a pole, near eye level so it's in view
 // Where the gripping hand may sit in the view, as fractions of its half-angles:
-// across, and up from center (clear of the balance bar and narration box).
+// across (clear of the balance bar on the left), and up from center (clear of
+// the narration box).
 const HAND_VIEW = { h: 0.6, lo: 0.15, hi: 0.6 };
 // On a pole your own body stands this much further back from it than the
 // slot, and shows this much of theta, so your eyes don't lean past your hand.
@@ -58,6 +59,7 @@ export class Player {
     this.pos = new THREE.Vector3();
     this.onPress = null;   // SPACE (or the context button) went down
     this.onRelease = null; // ... and came back up
+    this.onSit = null;     // M (for manspread): sit down or stand up
     this.onContact = null; // (rider, strength 0..1) when you run or stumble into someone
     this.active = false;
     this.gripping = false; // SPACE or the button is held down
@@ -66,6 +68,10 @@ export class Player {
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) this.press();
+        return;
+      }
+      if (e.code === 'KeyM') {
+        if (!e.repeat && this.active && this.onSit) this.onSit();
         return;
       }
       const k = KEYS[e.code];
@@ -174,13 +180,19 @@ export class Player {
   // holding, there's nothing to press: releasing SPACE lets go.
   context(riders) {
     if (this.mode === 'hold') return { label: 'Holding on' };
-    if (this.mode === 'sit') return { label: 'Stand up', run: () => this.standUp(riders) };
     if (this.mode !== 'walk' || !this.aboard) return null;
     const slot = this.grabbable(riders);
     if (slot) return { label: 'Grab pole', run: () => this.grab(slot, riders), slot };
-    const seat = this.sittable(riders);
-    if (seat) return { label: 'Sit down', run: () => this.sit(seat, riders), seat };
     return null;
+  }
+
+  // What M (or the seat button) would do right now: sit down in reach of a
+  // free seat, or stand back up. Sitting is never on SPACE.
+  seatContext(riders) {
+    if (this.mode === 'sit') return { label: 'Stand up', run: () => this.standUp(riders) };
+    if (this.mode !== 'walk' || !this.aboard) return null;
+    const seat = this.sittable(riders);
+    return seat ? { label: 'Sit down', run: () => this.sit(seat, riders), seat } : null;
   }
 
   grab(slot, riders) {

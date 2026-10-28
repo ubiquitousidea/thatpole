@@ -5,9 +5,12 @@ import { rng } from './ride.js';
 import { sfx } from './sfx.js';
 
 // The other passengers. Each one is seated, holding a pole slot, holding the
-// overhead rail, or walking somewhere. Pole slots open and close as riders
-// shift around: a slot that comes free is claimed by a standing rider after a
-// while (DIFFICULTY.claim), which is the window the player has to grab it.
+// overhead rail, or walking somewhere. Everyone standing wants a seat: they go
+// for one in staggered waves while the train is slow, and stay standing only
+// when no seat they'll take is free (picky riders won't sit right next to
+// someone). Once seated they stay put. A pole slot that comes free is claimed
+// by a nearby rail rider who gave up on a seat after a while
+// (DIFFICULTY.claim), which is the window the player has to grab it.
 //
 // Every rider has an annoyance level from 0 to 1. Standing in their personal
 // space, bumping into them, blocking their way, sniping their pole and above
@@ -25,11 +28,31 @@ export const LINES = {
   sniped: ['I was going for that', 'wow. okay.', '...cool. cool cool.', 'really?'],
   hostile: ['I swear to god', 'TOURIST.', 'Get on that pole or get off the train', 'Somebody film this guy', 'unbelievable'],
   praise: ['nice.', "now THAT's a New Yorker", 'respect.', 'look at him go'],
+  // Thoughts: said to nobody, shown in a thought bubble, never a grumble.
+  thoughtPlain: ['I hope I turned the stove off', 'did I lock the door?', 'need to call mom back', 'rent is due friday',
+    'what do I make for dinner', 'I should have taken the 7', 'did I answer that email?', 'my feet hurt',
+    'is it tuesday?', 'forgot my umbrella again', 'need milk. and eggs.', 'is the iron on? no. maybe.',
+    'I should go to the gym', 'five more stops', 'should I quit my job'],
+  thoughtOdd: ['the moon owes me money', 'spaghetti is long rice', 'I could fight a swan', 'what if the train is riding me',
+    'the rats are unionizing', 'pigeons are just sky rats', 'I am 40 percent soup', 'do fish know they are wet?',
+    'my left sock knows', 'bagels are bread donuts', 'beep boop', 'what if I am the pole', 'cheese is milk, but brave',
+    'clouds are sky sheep', 'who invented Tuesday'],
 };
 
 const WALK_SPEED = 1.1;
 const LINE_COOLDOWN = 6;
+const SEEK_DELAY = [1, 30];   // seconds after spawn a standing rider first looks for a seat
+const SEEK_RETRY = [8, 15];   // and how often after that, if none would do
+const MAX_SEEKERS = 6;        // riders walking to seats at once, so the aisle doesn't jam
+const CLAIM_REACH = 4;        // nobody crosses the car for a pole slot
+const THINK_EVERY = [14, 30]; // seconds between a thinker's thoughts
+const THINK_NEAR = 5;         // thoughts you can see: riders this close to you
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
+
+// Seats right next to each seat: along the same wall bench, or the other seat
+// of the same cross row. Facing rows don't count.
+const NEIGHBORS = SEATS.map((s) => SEATS.filter((q) => q !== s && q.side === s.side && q.kind === s.kind
+  && (s.kind === 'wall' || q.z === s.z) && Math.hypot(q.x - s.x, q.z - s.z) < 0.8));
 
 class Rider {
   constructor(id, body, rand) {
@@ -50,6 +73,12 @@ class Rider {
     this.stiff = 0.8 + rand() * 0.6;
     this.path = [];
     this.wait = 0;
+    this.picky = rand() < 0.3; // won't sit right next to someone
+    const t = rand();
+    this.thinks = t < 0.2 ? 'odd' : t < 0.6 ? 'plain' : null;
+    this.thinkT = 4 + rand() * 20;
+    this.seekAt = Infinity;
+    this.looked = false; // has looked for a seat and found none
   }
 
   get solid() {
@@ -101,8 +130,12 @@ export class Riders {
 
   spawn() {
     const rand = this.rand, d = this.diff;
-    const seatIds = shuffle(SEATS.map((s) => s.id), rand).slice(0, Math.min(d.seated, SEATS.length - 1));
-    for (const id of seatIds) this.sitAt(this.add(new Body(rand)), SEATS[id]);
+    // The people already sitting spread out: nobody sits next to a stranger
+    // while there's a seat with no one beside it.
+    for (let i = 0; i < Math.min(d.seated, SEATS.length - 1); i++) {
+      const free = shuffle(SEATS.filter((s) => !this.seats[s.id]), rand);
+      this.sitAt(this.add(new Body(rand)), free.find((s) => this.alone(s)) || free[0]);
+    }
     const standing = d.standing;
     const onPoles = Math.min(SLOTS.length - 6, Math.round(standing * 0.65));
     const slotIds = shuffle(SLOTS.map((s) => s.id), rand);
@@ -114,6 +147,7 @@ export class Riders {
         if (spot) this.railAt(r, spot);
         else this.holdAt(r, SLOTS[slotIds[i]]);
       }
+      r.seekAt = this.range(SEEK_DELAY);
     }
     this.slots.forEach((st) => this.freed(st));
     // A few people waiting on the platform at Queensboro Plaza board with you.
@@ -150,7 +184,6 @@ export class Riders {
     st.claimAt = Infinity;
     r.mode = 'pole';
     r.slot = slot;
-    r.stay = this.range(this.diff.stay);
     r.base.set(slot.x, 0, slot.z);
     const pole = POLES[slot.pole];
     r.yaw = Math.atan2(pole.x - slot.x, pole.z - slot.z) + (this.rand() - 0.5) * 1.2;
@@ -163,6 +196,43 @@ export class Riders {
     r.base.set(spot.x, 0, spot.z);
     r.yaw = spot.side > 0 ? Math.PI / 2 : -Math.PI / 2;
     r.idleSince = this.time;
+  }
+
+  // Nobody sits right next to this seat, and nobody is on the way to.
+  alone(seat) {
+    return NEIGHBORS[seat.id].every((q) => !this.seats[q.id]);
+  }
+
+  // The nearest seat r would take: free, out of reach of your knees, and for a
+  // picky rider, with nobody beside it.
+  findSeat(r) {
+    let best = null, bestD = Infinity;
+    for (const seat of SEATS) {
+      if (this.seats[seat.id]) continue;
+      if (this.playerSeat && NEIGHBORS[this.playerSeat.id].includes(seat)) continue;
+      if (r.picky && !this.alone(seat)) continue;
+      const dd = dist(r.base, seat);
+      if (dd < bestD) {
+        best = seat;
+        bestD = dd;
+      }
+    }
+    return best;
+  }
+
+  // Head for a seat if there is one. Returns whether r is on the way.
+  seekSeat(r) {
+    const seat = this.findSeat(r);
+    if (!seat) return false;
+    const from = r.base.clone();
+    this.leaveSpot(r);
+    this.seats[seat.id] = r;
+    r.seatBound = true;
+    this.walk(r, [...this.aislePath(from, seat.front), seat], () => {
+      r.seatBound = false;
+      this.sitAt(r, seat);
+    });
+    return true;
   }
 
   // A slot just came free: some standing rider will go for it in a while.
@@ -268,6 +338,12 @@ export class Riders {
     return true;
   }
 
+  // A thought: silent, not aimed at anyone, and not a grumble.
+  think(r) {
+    const text = pick(r.thinks === 'odd' ? LINES.thoughtOdd : LINES.thoughtPlain, this.rand);
+    this.bubbles.push({ rider: r, text, t: 0, life: 2.5 + text.length * 0.06, thought: true });
+  }
+
   // ---- stations ----
 
   // Queensboro Plaza: the people on the platform get on.
@@ -276,11 +352,25 @@ export class Riders {
       if (r.mode !== 'platform') continue;
       r.delay -= dt;
       if (r.delay > 0) continue;
+      // In through the doors, then to a seat if there is one, else the rail.
       const door = nearestDoor(r.base.z);
+      const inside = { x: 0.2, z: door };
+      const seat = this.findSeat({ base: inside, picky: r.picky });
+      if (seat) {
+        this.seats[seat.id] = r;
+        r.seatBound = true;
+        this.walk(r, [{ x: 1.0, z: door }, inside, ...this.aislePath(inside, seat.front), seat], () => {
+          r.seatBound = false;
+          this.sitAt(r, seat);
+        });
+        continue;
+      }
       const spot = this.freeRail();
       if (!spot) continue;
       this.rails[spot.id] = r;
-      this.walk(r, [{ x: 1.0, z: door }, { x: 0.2, z: door }, ...this.aislePath({ x: 0.2, z: door }, spot)], () => this.railAt(r, spot));
+      r.looked = true;
+      r.seekAt = this.time + this.range(SEEK_RETRY);
+      this.walk(r, [{ x: 1.0, z: door }, inside, ...this.aislePath(inside, spot)], () => this.railAt(r, spot));
     }
   }
 
@@ -322,13 +412,14 @@ export class Riders {
     const head = player.camera.position;
     const R = d.space;
 
-    // Free slots get claimed when their window runs out.
+    // Free slots get claimed when their window runs out, by someone close by
+    // who has already given up on a seat.
     this.slots.forEach((st, id) => {
       if (st.occupant || st.reservedBy || this.time < st.claimAt) return;
       const slot = SLOTS[id];
-      let best = null, bestD = Infinity;
+      let best = null, bestD = CLAIM_REACH;
       for (const r of this.list) {
-        if (r.mode !== 'rail' || this.time - r.idleSince < 2) continue;
+        if (r.mode !== 'rail' || !r.looked || this.time - r.idleSince < 2) continue;
         const dd = dist(r.base, slot);
         if (dd < bestD) {
           best = r;
@@ -369,6 +460,8 @@ export class Riders {
       }
     }
 
+    let seekers = this.list.filter((r) => r.seatBound).length;
+    let thoughts = this.bubbles.filter((b) => b.thought).length;
     for (const r of this.list) {
       if (r.mode === 'gone') continue;
       r.cooldown -= dt;
@@ -380,11 +473,26 @@ export class Riders {
         if (r.exitDelay <= 0 && r.mode !== 'walk') this.startExit(r);
       }
 
-      if (r.mode === 'pole') {
-        r.stay -= dt;
-        if (r.stay <= 0) this.shift(r);
+      // Standing riders look for a seat now and then, a few at a time.
+      if ((r.mode === 'pole' || r.mode === 'rail') && !r.exiting && this.time >= r.seekAt && seekers < MAX_SEEKERS) {
+        if (this.seekSeat(r)) seekers++;
+        else {
+          r.looked = true;
+          r.seekAt = this.time + this.range(SEEK_RETRY);
+        }
       }
       if (r.mode === 'walk') this.step(r, ctx);
+
+      // Thinking, when calm and close enough for you to see it.
+      r.thinkT -= dt;
+      if (r.thinkT <= 0) {
+        r.thinkT = this.range(THINK_EVERY);
+        if (r.thinks && ctx.aboard && r.solid && thoughts < 2 && r.annoyance < 0.3 && !r.glare && !r.point
+          && dist(r.base, player.pos) < THINK_NEAR && !this.bubbles.some((b) => b.rider === r)) {
+          this.think(r);
+          thoughts++;
+        }
+      }
 
       // Annoyance from the player being here.
       if (ctx.aboard && r.solid) {
@@ -418,34 +526,6 @@ export class Riders {
     this.updateMarkers(dt);
   }
 
-  // A pole rider's time is up: move to another free slot or to the rail.
-  shift(r) {
-    const here = r.slot;
-    const free = SLOTS.filter((s) => !this.slots[s.id].occupant && !this.slots[s.id].reservedBy && s.pole !== here.pole
-      && Math.abs(s.z - here.z) < 6);
-    this.leaveSpot(r);
-    if (free.length && this.rand() < 0.4) {
-      const slot = pick(free, this.rand);
-      const st = this.slots[slot.id];
-      st.reservedBy = r;
-      this.walk(r, this.aislePath(r.base, slot), () => {
-        if (st.occupant) {
-          const spot = this.freeRail();
-          if (spot) this.railAt(r, spot);
-          else this.holdAt(r, here);
-          return;
-        }
-        this.holdAt(r, slot);
-      });
-      return;
-    }
-    const spot = this.freeRail();
-    if (spot) {
-      this.rails[spot.id] = r;
-      this.walk(r, this.aislePath(r.base, spot), () => this.railAt(r, spot));
-    } else this.holdAt(r, here);
-  }
-
   // Walk toward the next point, waiting (and grumbling) if the player is in the way.
   step(r, ctx) {
     const target = r.path[0];
@@ -467,8 +547,9 @@ export class Riders {
     const blocked = ctx.aboard && !r.shove && (!parked || r.exiting) && ahead > 0 && ahead < 0.6 && off < 0.4;
     if (blocked) {
       r.wait += ctx.dt;
-      r.annoyance = Math.min(1, r.annoyance + 0.3 * this.diff.temper * ctx.dt);
-      if (r.wait > 0.6 && !r.complained) r.complained = this.say(r, pick(LINES.block, this.rand), r.exiting);
+      // A moment's wait is the subway. Standing there is not.
+      if (r.wait > 1) r.annoyance = Math.min(1, r.annoyance + 0.3 * this.diff.temper * ctx.dt);
+      if (r.wait > 1.2 && !r.complained) r.complained = this.say(r, pick(LINES.block, this.rand), r.exiting);
       r.glare = 1;
       if (r.wait > 2.5) r.shove = 1.5; // give up waiting and shove past
       return;
