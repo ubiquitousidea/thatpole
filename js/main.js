@@ -31,7 +31,8 @@ function computeLayout() {
 const ui = {
   bar: $('btnbar'),
   actionBtn: $('action'),
-  onAction: null,
+  onPress: null,
+  onRelease: null,
   actionLabel: null,
 
   setButtons(list) {
@@ -48,8 +49,10 @@ const ui = {
     }));
   },
 
-  // The context button: what SPACE does right now. Only touches the DOM on change.
-  setAction(label) {
+  // The context button: what SPACE does right now, and whether it's held
+  // down. Only touches the DOM on change.
+  setAction(label, held = false) {
+    this.actionBtn.classList.toggle('held', held);
     if (label === this.actionLabel) return;
     this.actionLabel = label;
     this.actionBtn.hidden = !label;
@@ -68,10 +71,16 @@ const ui = {
     });
   },
 };
+// It works like SPACE: held down, it holds the pole.
 ui.actionBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  if (ui.onAction) ui.onAction();
+  ui.actionBtn.setPointerCapture(e.pointerId);
+  if (ui.onPress) ui.onPress();
 });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  ui.actionBtn.addEventListener(type, () => ui.onRelease && ui.onRelease());
+}
+ui.actionBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 // Keep SPACE from also pressing whichever button has focus.
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') e.preventDefault();

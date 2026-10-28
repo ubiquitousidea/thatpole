@@ -4,6 +4,12 @@
 // every screen. Lower is chunkier.
 export const SCENE_RES = 230;
 
+// The first-person lens. corner: half-angle in degrees at the screen corner.
+// fisheye: kappa in r ~ kappa tan(theta / kappa); 1 is a plain perspective
+// camera, 2 is stereographic. supersample: the most the scene is rendered
+// over the scene grid, to keep the magnified middle of the view sharp.
+export const VIEW = { corner: 75, fisheye: 2, supersample: 3 };
+
 // The HUD (text, panels) gets the largest whole-CSS-px fat pixel that still
 // leaves at least this many fat pixels across, so the 8px font always fits.
 export const HUD_RES = { w: 480, h: 280 };

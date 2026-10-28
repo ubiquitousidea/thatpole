@@ -130,8 +130,10 @@ export class Hud {
       c.fillStyle = col;
       c.fillRect(x + i, y, 1, h);
     }
-    // theta > 0 leans toward the front of the train, drawn to the right.
-    const f = THREE.MathUtils.clamp(p.theta / limit, -1.1, 1.1);
+    // theta > 0 leans toward the front of the train. The bar is drawn the
+    // way you face: leaning forward is to the right.
+    const facing = p.mode === 'hold' ? p.facing : 1;
+    const f = THREE.MathUtils.clamp((p.theta * facing) / limit, -1.1, 1.1);
     const tx = Math.round(x + w / 2 + (f * w) / 2);
     c.fillStyle = '#000';
     c.fillRect(tx - 2, y - 3, 5, h + 6);
@@ -142,7 +144,7 @@ export class Hud {
       this.txt(f < 0 ? 'LEAN FORWARD! (UP)' : 'LEAN BACK! (DOWN)', this.L.W / 2, y - 14, '#ff6b6b', 8, 'center');
     }
     if (p.mode === 'walk' && g.state === 'ride') {
-      this.txt(g.touch ? 'GRAB A POLE!' : 'GRAB A POLE! (SPACE)', this.L.W / 2, y - 14, '#ffd34d', 8, 'center');
+      this.txt(g.touch ? 'GRAB A POLE!' : 'GRAB A POLE! (HOLD SPACE)', this.L.W / 2, y - 14, '#ffd34d', 8, 'center');
     }
   }
 
@@ -171,7 +173,7 @@ export class Hud {
       _v.y += 0.18;
       const cv = _v.clone().applyMatrix4(cam.matrixWorldInverse);
       const behind = cv.z > -0.1;
-      _v.project(cam);
+      g.world.project(_v);
       let x = ((_v.x + 1) / 2) * W, y = ((1 - _v.y) / 2) * H;
       let edge = 0;
       if (behind || x < 0 || x > W) {

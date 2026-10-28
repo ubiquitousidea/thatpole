@@ -33,6 +33,7 @@ See README.md for what the game is and the file map. This file covers the things
 
 ## Rendering
 - Draw calls matter, especially on phones. `mergeStatic` (pixels.js) bakes each static group into one mesh per material. Bodies bake each joint's parts into one vertex-colored mesh (`bake` in body.js), so a rider is 12 draws. Rush Hour comes to about 600 calls. Don't add per-rider meshes without baking them.
+- The view is a fisheye. `World` renders a wide plain-perspective view into a render target (up to `VIEW.supersample` times the scene grid, with an sRGB target so the dark tunnel doesn't band), and a full-screen pass bends it. The camera's own `fov` is that wide source, not what you see. To put something on screen, use `world.project(v)` instead of `v.project(camera)`. `camera.userData.view` holds the visible half-angles.
 - Things added after `mergeStatic` runs on a group stay separate meshes. Door leaves are nested groups on purpose, so they are left out of the merge and can still slide.
 - Canvas text must be ASCII (Press Start 2P), including rider lines and signs.
 
@@ -42,5 +43,7 @@ See README.md for what the game is and the file map. This file covers the things
   - `__game.skipTo('elevated'|'tunnel'|'river'|'lex')` jumps along the ride with you aboard.
   - `__game.advance(seconds, fn)` steps the game at 30 fps right away, calling `fn(game)` before each step. Use it because headless and background tabs throttle animation frames.
   - `__game.jolt(amp)` adds a jolt.
-- `__game.player.context(__game.riders).run()` does what SPACE would. You can also call `player.grab(slot, riders)` and `player.sit(seat, riders)` directly. Import `SLOTS` and `SEATS` from `/js/layout.js`.
+- Grip is held, not toggled. SPACE or the context button down calls `player.press()` and up calls `player.release()`, which lets go. While `player.gripping` is true, walking into reach of a free slot grabs it. `player.grab(slot, riders)` called directly holds until `player.letGo(riders)` or a `release()`.
+- On a pole the player faces along ±z, toward the pole (`player.facing`). The lean input, body lean and HUD bar are relative to that facing, while `theta` stays in train terms. `HAND_VIEW` in player.js limits head turn and pitch so the gripping hand stays on screen, and `HOLD_BACK` and `BODY_LEAN` keep the eye from leaning past it.
+- `__game.player.context(__game.riders).run()` does what pressing SPACE would. You can also call `player.grab(slot, riders)` and `player.sit(seat, riders)` directly. Import `SLOTS` and `SEATS` from `/js/layout.js`.
 - If the Chrome extension isn't connected, a headless Chrome driven over the DevTools protocol works. Run Chrome with `--headless=new --remote-debugging-port=... --use-angle=swiftshader`, and use Node's built-in WebSocket for `Runtime.evaluate` and `Page.captureScreenshot`.
