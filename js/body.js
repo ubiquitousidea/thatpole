@@ -128,8 +128,11 @@ export class Body {
       sh.add(limb(top, 0.035 * h, dims.upper));
       const el = joint(sh, 0, -dims.upper, 0);
       el.add(limb(top, 0.03 * h, dims.fore));
-      const hand = new THREE.Mesh(HEAD, mat(skin));
-      hand.scale.setScalar(0.03 * h);
+      // A ball reads fine from across the car; the player's own hands are
+      // right in front of the camera, so they get a fist instead.
+      const hand = new THREE.Mesh(opts.fists ? BOX : HEAD, mat(skin));
+      if (opts.fists) hand.scale.set(0.04 * h, 0.05 * h, 0.038 * h);
+      else hand.scale.setScalar(0.03 * h);
       hand.position.y = -dims.fore - 0.01 * h;
       el.add(hand);
       return { side, sh, el, hand, ik: null };

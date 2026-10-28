@@ -30,13 +30,15 @@ export class Game {
     this.diffKey = 'normal';
     this.seed = 1;
     this.extra = []; // debug jolts: { t, amp }
-    player.onAction = () => this.action();
+    player.onPress = () => this.press();
+    player.onRelease = () => this.release();
     player.onContact = (r, strength) => this.riders && this.riders.contact(r, strength);
     player.onStumble = () => {
       sfx.thump();
       this.hud.toast('WHOA!', '#ff6b6b');
     };
-    ui.onAction = () => this.action();
+    ui.onPress = () => player.press();
+    ui.onRelease = () => player.release();
   }
 
   // ---- setup ----
@@ -118,23 +120,41 @@ export class Game {
 
   // ---- play ----
 
-  action() {
-    if (!['board', 'ride', 'arrive'].includes(this.state)) return;
+  playing() {
+    return ['board', 'ride', 'arrive'].includes(this.state);
+  }
+
+  // SPACE or the context button went down: grab, sit or stand up.
+  press() {
+    if (!this.playing()) return;
     const c = this.player.context(this.riders);
-    if (!c) return;
+    if (!c || !c.run) return;
+    if (c.slot) return this.grabSlot(c.slot);
     c.run();
     sfx.grip();
     if (this.player.mode === 'sit') {
       this.hud.toast('MANSPREADING!', '#ff6b6b');
     }
-    if (this.player.mode === 'hold' && !this.toldLean && this.state === 'ride') this.tellLean();
+  }
+
+  // ... and came back up: let go of the pole.
+  release() {
+    if (this.player.mode !== 'hold' || !this.playing()) return;
+    this.player.letGo(this.riders);
+    sfx.grip();
+  }
+
+  grabSlot(slot) {
+    this.player.grab(slot, this.riders);
+    sfx.grip();
+    if (!this.toldLean && this.state === 'ride') this.tellLean();
   }
 
   tellLean() {
     this.toldLean = true;
     this.hud.say(this.touch
-      ? 'Got it. Now tilt the phone forward and back to lean against the jolts. Keep the BALANCE tick in the green.'
-      : 'Got it. Hold UP / DOWN to lean against the jolts. Keep the BALANCE tick in the green or you fly off the pole.');
+      ? 'Got it. Keep holding the button, and tilt the phone forward and back to lean against the jolts. Keep the BALANCE tick in the green.'
+      : 'Got it. Keep holding SPACE, and hold UP / DOWN to lean against the jolts. Keep the BALANCE tick in the green or you fly off the pole.');
   }
 
   rideState() {
@@ -168,6 +188,11 @@ export class Game {
     const riding = this.state === 'ride' || this.state === 'arrive';
     const a = riding ? s.a : 0;
     const shake = riding ? s.shake : { x: 0, y: 0 };
+    // Holding SPACE grabs the first free spot you step onto.
+    if (this.player.gripping && this.player.mode === 'walk' && this.player.aboard && this.playing()) {
+      const slot = this.player.grabbable(this.riders);
+      if (slot) this.grabSlot(slot);
+    }
     this.player.update(dt, { a, shake, rects: this.rects(), riders: this.riders });
     this.riders.update({ dt, player: this.player, a, shake, aboard: this.player.aboard && this.state !== 'end' && this.state !== 'title' });
 
@@ -178,10 +203,13 @@ export class Game {
 
     sfx.engine.set(s.v, s.aTrain, Math.hypot(s.shake.x, s.shake.y), s.aTrain < -0.2);
 
-    const c = ['board', 'ride', 'arrive'].includes(this.state) ? this.player.context(this.riders) : null;
+    const c = this.playing() ? this.player.context(this.riders) : null;
     this.riders.highlight = c && c.slot ? c.slot : null;
     this.riders.showMarkers = this.player.aboard && this.state !== 'end';
-    this.ui.setAction(c ? (this.touch ? c.label : `${c.label} [SPACE]`) : null);
+    // A held button stays up, so it never vanishes from under a finger.
+    let label = c ? c.label : this.touch && this.player.gripping && this.playing() ? 'Hold on' : null;
+    if (label && !this.touch) label += c && c.slot ? ' [hold SPACE]' : ' [SPACE]';
+    this.ui.setAction(label, this.player.gripping);
   }
 
   updateBoard(dt) {
@@ -190,8 +218,8 @@ export class Game {
     if (this.player.aboard) {
       if (this.boardedT === 0) {
         this.hud.say(this.touch
-          ? 'Gold rings mark free spots at a pole. Step onto one and tap GRAB POLE before someone else does. Red: someone is already headed there.'
-          : 'Gold rings mark free spots at a pole. Step onto one and press SPACE before someone else takes it. Red rings: someone is already headed there.');
+          ? 'Gold rings mark free spots at a pole. Step onto one and hold GRAB POLE before someone else does. Red: someone is already headed there.'
+          : 'Gold rings mark free spots at a pole. Step onto one and hold SPACE before someone else takes it. Let go of SPACE, let go of the pole.');
       }
       this.boardedT += dt;
     }
@@ -266,8 +294,8 @@ export class Game {
     sfx.chime();
     this.riders.alight(LEX_SIDE);
     this.hud.say(this.touch
-      ? 'Lexington Av/59 St. Doors open on the LEFT. Get off before they close!'
-      : 'Lexington Av/59 St. Doors open on the LEFT. Let go (SPACE) and get off before they close!');
+      ? 'Lexington Av/59 St. Doors open on the LEFT. Let go of the button and get off before they close!'
+      : 'Lexington Av/59 St. Doors open on the LEFT. Let go of SPACE and get off before they close!');
   }
 
   updateArrive(dt) {

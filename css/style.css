@@ -40,7 +40,8 @@ canvas {
   flex-wrap: wrap;
   max-width: 90vw;
 }
-#action { position: absolute; }
+#action { position: absolute; touch-action: none; -webkit-touch-callout: none; }
+#action.held { transform: translateY(var(--px)); box-shadow: 0 calc(var(--px) * 0.5) 0 var(--ink); background: #fccc0a; }
 #action[hidden] { display: none; }
 
 .btn {

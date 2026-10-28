@@ -4,14 +4,18 @@ import { Tilt } from './tilt.js';
 import { inRects, SEATS, SLOTS, POLES, PLAYER_R, RIDER_R, POLE_R, CAR } from './layout.js';
 import { rng } from './ride.js';
 
-// The player: walks with tank controls like Euler's Expedition, grabs a pole
-// with SPACE, and leans against the train's jolts to keep from swinging off.
+// The player: walks with tank controls like Euler's Expedition, holds a pole
+// for as long as SPACE is held, and leans against the train's jolts to keep
+// from swinging off.
 //
 // Balance is a damped pendulum about the feet (theta > 0 leans toward the front
 // of the train). On a pole: theta'' = -K theta - C theta' - G a + LEAN input,
 // where a is the train's felt acceleration (jolts included). Speeding up
 // tips you back, so you lean forward against it. Free-standing is stiffer
-// but has no input; a hard enough jolt makes you stumble.
+// but has no input; a hard enough jolt makes you stumble. On a pole you face
+// along the car whichever way keeps the pole in front of you (facing +1 is
+// toward the front of the train); the lean input and the HUD are relative to
+// that facing, theta stays in train terms.
 
 const WALK_SPEED = 1.6;
 const TURN_SPEED = 2.2;
@@ -20,6 +24,14 @@ const TURN_EASE = 0.15;
 const HEAD_TURN = 1.25;   // how far you can look around while holding or seated
 const REACH = 0.8;        // to a slot's standing spot
 const SIT_REACH = 0.95;
+const PLAYER_GRIP = 1.72; // hand height on a pole, near eye level so it's in view
+// Where the gripping hand may sit in the view, as fractions of its half-angles:
+// across, and up from center (clear of the balance bar and narration box).
+const HAND_VIEW = { h: 0.6, lo: 0.15, hi: 0.6 };
+// On a pole your own body stands this much further back from it than the
+// slot, and shows this much of theta, so your eyes don't lean past your hand.
+const HOLD_BACK = 0.22;
+const BODY_LEAN = 0.3;
 const K = 7, C = 2.4, G = 2.45, LEAN = 2.1;
 const LEAN_EASE = 0.2;   // keys are on/off; the lean itself eases in and out
 export const GRIP_LIMIT = 0.42;
@@ -40,18 +52,20 @@ export class Player {
     this.camera = camera;
     this.tilt = new Tilt();
     this.keys = new Set();
-    this.body = new Body(rng(99), { height: 1.78, build: 1.05, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a' });
+    this.body = new Body(rng(99), { height: 1.78, build: 1.05, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a', fists: true });
     this.body.hideHead();
     scene.add(this.body.root);
     this.pos = new THREE.Vector3();
-    this.onAction = null;
+    this.onPress = null;   // SPACE (or the context button) went down
+    this.onRelease = null; // ... and came back up
     this.onContact = null; // (rider, strength 0..1) when you run or stumble into someone
     this.active = false;
+    this.gripping = false; // SPACE or the button is held down
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        if (!e.repeat && this.active && this.onAction) this.onAction();
+        if (!e.repeat) this.press();
         return;
       }
       const k = KEYS[e.code];
@@ -59,9 +73,27 @@ export class Player {
       this.keys.add(k);
       if (this.active && e.code.startsWith('Arrow')) e.preventDefault();
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(KEYS[e.code]));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Space') this.release();
+      this.keys.delete(KEYS[e.code]);
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.release();
+    });
     this.reset();
+  }
+
+  press() {
+    if (this.gripping) return;
+    this.gripping = true;
+    if (this.active && this.onPress) this.onPress();
+  }
+
+  release() {
+    if (!this.gripping) return;
+    this.gripping = false;
+    if (this.onRelease) this.onRelease();
   }
 
   reset(x = 4, z = 0, yaw = -Math.PI / 2) {
@@ -76,6 +108,10 @@ export class Player {
     this.lean = 0;
     this.slot = null;
     this.seat = null;
+    this.facing = 1;
+    this.arm = 1;
+    this.lookRange = null;   // headYaw limits that keep the gripping hand in view
+    this.pitchFix = 0;
     this.stumbleT = 0;
     this.push = { x: 0, z: 0 };
     this.touching = new Set();
@@ -84,6 +120,7 @@ export class Player {
     this.body.position.copy(this.pos);
     this.body.yaw = this.yaw + Math.PI;
     this.body.pose('stand');
+    this.body.reach(0, null);
     this.body.reach(1, null);
     this.body.snap();
   }
@@ -133,9 +170,10 @@ export class Player {
     return best;
   }
 
-  // What SPACE would do right now: { label, run } or null.
+  // What pressing SPACE would do right now: { label, run } or null. While
+  // holding, there's nothing to press: releasing SPACE lets go.
   context(riders) {
-    if (this.mode === 'hold') return { label: 'Let go', run: () => this.letGo(riders) };
+    if (this.mode === 'hold') return { label: 'Holding on' };
     if (this.mode === 'sit') return { label: 'Stand up', run: () => this.standUp(riders) };
     if (this.mode !== 'walk' || !this.aboard) return null;
     const slot = this.grabbable(riders);
@@ -150,14 +188,25 @@ export class Player {
     this.mode = 'hold';
     this.slot = slot;
     this.pos.set(slot.x, 0, slot.z);
-    this.headYaw = Math.atan2(Math.sin(this.yaw), Math.cos(this.yaw)); // keep looking where you were
-    this.yaw = 0;
+    // Face the pole's end of the car; a pole beside you keeps the way you looked.
+    const pole = POLES[slot.pole];
+    const dz = pole.z - slot.z;
+    this.facing = dz < -0.1 ? 1 : dz > 0.1 ? -1 : Math.cos(this.yaw) >= 0 ? 1 : -1;
+    const yaw = this.facing > 0 ? 0 : Math.PI;
+    this.headYaw = wrap(this.yaw - yaw); // keep looking where you were
+    this.yaw = yaw;
+    // Grip with the hand on the pole's side (the body's +x is its left).
+    const by = yaw + Math.PI;
+    const localX = (pole.x - slot.x) * Math.cos(by) - (pole.z - slot.z) * Math.sin(by);
+    this.arm = localX > 0.02 ? 0 : 1;
+    this.lookRange = null;
     this.vel.step = this.vel.side = this.spin = 0;
   }
 
   letGo(riders) {
     if (this.slot) riders.playerLeaves(this.slot);
     this.slot = null;
+    this.lookRange = null;
     this.mode = 'walk';
     this.yaw += this.headYaw;
     this.headYaw = 0;
@@ -201,12 +250,17 @@ export class Player {
 
     if (this.mode === 'hold') {
       this.stats.poleTime += dt;
-      const input = this.active ? axes.step : 0;
+      const input = this.active ? axes.step * this.facing : 0;
       this.lean = ease(this.lean, input, LEAN_EASE);
       const acc = -K * this.theta - C * this.omega - G * a + LEAN * this.lean;
       this.omega += acc * dt;
       this.theta += this.omega * dt;
-      this.headYaw = THREE.MathUtils.clamp(this.headYaw + axes.turn * TURN_SPEED * dt, -HEAD_TURN, HEAD_TURN);
+      // Look around, but don't turn further away from your hand.
+      const r = this.lookRange;
+      let head = THREE.MathUtils.clamp(this.headYaw + axes.turn * TURN_SPEED * dt, -HEAD_TURN, HEAD_TURN);
+      if (r && head > r.hi) head = Math.max(this.headYaw, r.hi);
+      if (r && head < r.lo) head = Math.min(this.headYaw, r.lo);
+      this.headYaw = head;
       if (Math.abs(this.theta) > GRIP_LIMIT) this.stumble(this.theta > 0 ? -1 : 1, riders);
     } else if (this.mode === 'sit') {
       this.stats.sitTime += dt;
@@ -277,23 +331,27 @@ export class Player {
   pose(dt, ctx) {
     const b = this.body;
     const shake = ctx.shake;
+    const ease = (tau) => 1 - Math.exp(-dt / tau);
     b.position.copy(this.pos);
+    b.yaw = this.yaw + Math.PI;
+    b.reach(0, null);
+    b.reach(1, null);
+    let grip = null;
     if (this.mode === 'sit') {
-      b.yaw = this.yaw + Math.PI;
       b.pose('spread');
-      b.reach(1, null);
       b.lean(0, shake.x * 0.01);
     } else if (this.mode === 'hold') {
-      b.yaw = this.yaw + Math.PI;
       b.pose('hold');
       const pole = POLES[this.slot.pole];
-      b.reach(1, _v.set(pole.x, this.slot.hand, pole.z));
-      b.lean(this.theta, shake.x * 0.01);
+      const ax = this.pos.x - pole.x, az = this.pos.z - pole.z, d = Math.hypot(ax, az) || 1;
+      b.position.x += (ax / d) * HOLD_BACK;
+      b.position.z += (az / d) * HOLD_BACK;
+      grip = _v.set(pole.x, PLAYER_GRIP, pole.z);
+      b.reach(this.arm, grip);
+      b.lean(this.theta * this.facing * BODY_LEAN, shake.x * 0.01);
     } else {
-      b.yaw = this.yaw + Math.PI;
       const moving = Math.hypot(this.vel.step, this.vel.side) > 0.15 || Math.abs(this.spin) > 0.4;
       b.pose(this.mode === 'stumble' ? 'stumble' : moving ? 'walk' : 'stand');
-      b.reach(1, null);
       b.lean(this.theta, shake.x * 0.01);
     }
     b.update(dt);
@@ -305,10 +363,32 @@ export class Player {
     cam.position.x += -Math.sin(look) * 0.07 + shake.x * 0.012;
     cam.position.z += -Math.cos(look) * 0.07;
     cam.position.y += 0.03 + shake.y * 0.008;
-    const pitch = this.mode === 'sit' ? -0.55 : -this.theta * 0.35 - (this.mode === 'stumble' ? 0.2 : 0);
+    let pitch = this.mode === 'sit' ? -0.55 : -this.theta * this.facing * 0.35 - (this.mode === 'stumble' ? 0.2 : 0);
+    let fix = 0;
+    if (grip) {
+      // Keep the gripping hand on screen: no turning the head too far from
+      // it, and the view tips to keep it clear of the narration box.
+      // Corrections ease in, so grabbing swings the view onto the hand.
+      const view = cam.userData.view || { h: 0.9, v: 0.6 };
+      const dx = grip.x - cam.position.x, dy = grip.y - cam.position.y, dz = grip.z - cam.position.z;
+      const rel = wrap(Math.atan2(-dx, -dz) - this.yaw);
+      const w = view.h * HAND_VIEW.h;
+      let lo = Math.max(rel - w, -HEAD_TURN), hi = Math.min(rel + w, HEAD_TURN);
+      if (lo > hi) lo = hi = THREE.MathUtils.clamp(0, rel - w, rel + w);
+      this.lookRange = { lo, hi };
+      this.headYaw += (THREE.MathUtils.clamp(this.headYaw, lo, hi) - this.headYaw) * ease(0.15);
+      const handPitch = Math.atan2(dy, Math.hypot(dx, dz));
+      fix = THREE.MathUtils.clamp(pitch, handPitch - view.v * HAND_VIEW.hi, handPitch - view.v * HAND_VIEW.lo) - pitch;
+    }
+    this.pitchFix += (fix - this.pitchFix) * ease(0.15);
+    pitch += this.pitchFix;
     const roll = shake.x * 0.008 + (this.mode === 'stumble' ? Math.sin(this.stumbleT * 18) * 0.06 : 0);
     cam.rotation.set(pitch, look, roll, 'YXZ');
   }
+}
+
+function wrap(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
 }
 
 function pushOut(p, x, z, min) {
