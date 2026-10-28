@@ -18,9 +18,18 @@ See README.md for what the game is and the file map. This file covers the things
   - On Rush Hour you must lean, or the sustained acceleration throws you.
   - A 0.2 s-reaction bang-bang controller survives Normal.
   - Re-check any change the same way, with a small node script that steps `buildRide(diff).at(t)`.
-- `DIFFICULTY` in `js/settings.js`: `claim` is how long a free slot stays free before a rail rider goes for it (the window the player has). `space` is the personal-space radius, and `temper` scales every annoyance rate.
+- `DIFFICULTY` in `js/settings.js`: `seated` riders sit from the start and `standing` riders all want one of the 60 seats. `claim` is how long a free slot stays free before a rail rider goes for it (the window the player has). `space` is the personal-space radius, and `temper` scales every annoyance rate.
+- Riders want seats (riders.js):
+  - Standing riders first look for one `SEEK_DELAY` (1 to 30 s) after spawn, then retry every `SEEK_RETRY`. At most `MAX_SEEKERS` walk to seats at once.
+  - About 30% are `picky` and won't take a seat whose `NEIGHBORS` (the same bench, or the same cross row) are taken. Nobody sits beside the player's seat.
+  - Once seated, riders stay seated until Lex.
+  - By the tunnel (ride t of about 55 s), Easy is fully seated, Normal is about 80% seated with every seat taken, and Rush is about 67% seated. After that almost nobody walks.
+  - Only rail riders who have already failed to find a seat (`looked`) and are within `CLAIM_REACH` claim a free pole slot.
+- Thoughts: about 60% of riders have thoughts, `thoughtPlain` or `thoughtOdd`.
+  - A rider thinks only when calm and within `THINK_NEAR` of the player, with at most 2 thoughts on screen.
+  - Thoughts are bubbles with `thought: true`. They never count toward `riders.lines` (grumbles), and the HUD hides them when the rider is off screen.
 - The car's mood (`Riders.mood`) is the mean annoyance of the 6 most annoyed riders. At `MOOD_LIMIT` (game.js) you go viral. Sitting reaches it in about 18 s on Normal.
-- Riders walking past a player who is on a pole or in a seat squeeze by silently. Only a player standing in the aisle, or one blocking riders who are getting off at Lex, counts as blocking. Before that rule, a calm ride racked up about 28 "grumbles".
+- Riders walking past a player who is on a pole or in a seat squeeze by silently. Only a player standing in the aisle, or one blocking riders who are getting off at Lex, counts as blocking. Before that rule, a calm ride racked up about 28 "grumbles". A blocked rider also waits 1 s before getting annoyed, because the seat rush at boarding passes a player who is still walking in the aisle.
 
 ## Look of the car
 - The car is the R68 the N ran around 2015, from a photo the user picked (danphotographycool.com, `_dsc9122`, "R68 N Train Interior").
@@ -45,5 +54,5 @@ See README.md for what the game is and the file map. This file covers the things
   - `__game.jolt(amp)` adds a jolt.
 - Grip is held, not toggled. SPACE or the context button down calls `player.press()` and up calls `player.release()`, which lets go. While `player.gripping` is true, walking into reach of a free slot grabs it. `player.grab(slot, riders)` called directly holds until `player.letGo(riders)` or a `release()`.
 - On a pole the player faces along ±z, toward the pole (`player.facing`). The lean input, body lean and HUD bar are relative to that facing, while `theta` stays in train terms. `HAND_VIEW` in player.js limits head turn and pitch so the gripping hand stays on screen, and `HOLD_BACK` and `BODY_LEAN` keep the eye from leaning past it.
-- `__game.player.context(__game.riders).run()` does what pressing SPACE would. You can also call `player.grab(slot, riders)` and `player.sit(seat, riders)` directly. Import `SLOTS` and `SEATS` from `/js/layout.js`.
+- `__game.player.context(__game.riders).run()` does what pressing SPACE would, which is grabbing a pole only. Sitting and standing up are only on M and the orange seat button (`player.seatContext(riders)`, `Game.seat()`). You can also call `player.grab(slot, riders)` and `player.sit(seat, riders)` directly. Import `SLOTS` and `SEATS` from `/js/layout.js`.
 - If the Chrome extension isn't connected, a headless Chrome driven over the DevTools protocol works. Run Chrome with `--headless=new --remote-debugging-port=... --use-angle=swiftshader`, and use Node's built-in WebSocket for `Runtime.evaluate` and `Page.captureScreenshot`.

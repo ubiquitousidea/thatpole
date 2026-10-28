@@ -40,9 +40,16 @@ canvas {
   flex-wrap: wrap;
   max-width: 90vw;
 }
-#action { position: absolute; touch-action: none; -webkit-touch-callout: none; }
+/* The pole button and, well apart from it, the seat button. */
+#actions {
+  position: absolute;
+  display: flex;
+  gap: calc(var(--px) * 10);
+  align-items: flex-end;
+}
+#action { touch-action: none; -webkit-touch-callout: none; }
 #action.held { transform: translateY(var(--px)); box-shadow: 0 calc(var(--px) * 0.5) 0 var(--ink); background: #fccc0a; }
-#action[hidden] { display: none; }
+#action[hidden], #seat[hidden] { display: none; }
 
 .btn {
   pointer-events: auto;
@@ -64,3 +71,4 @@ canvas {
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.ghost { background: #cfd6ff; }
 .btn.action { background: #ffffff; }
+.btn.seat { background: #ff9a6b; }

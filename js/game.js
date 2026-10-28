@@ -32,6 +32,7 @@ export class Game {
     this.extra = []; // debug jolts: { t, amp }
     player.onPress = () => this.press();
     player.onRelease = () => this.release();
+    player.onSit = () => this.seat();
     player.onContact = (r, strength) => this.riders && this.riders.contact(r, strength);
     player.onStumble = () => {
       sfx.thump();
@@ -39,6 +40,7 @@ export class Game {
     };
     ui.onPress = () => player.press();
     ui.onRelease = () => player.release();
+    ui.onSit = () => this.seat();
   }
 
   // ---- setup ----
@@ -124,17 +126,21 @@ export class Game {
     return ['board', 'ride', 'arrive'].includes(this.state);
   }
 
-  // SPACE or the context button went down: grab, sit or stand up.
+  // SPACE or the context button went down: grab a pole in reach.
   press() {
     if (!this.playing()) return;
     const c = this.player.context(this.riders);
-    if (!c || !c.run) return;
-    if (c.slot) return this.grabSlot(c.slot);
+    if (c && c.slot) this.grabSlot(c.slot);
+  }
+
+  // M or the seat button: sit down (and spread) or stand back up.
+  seat() {
+    if (!this.playing()) return;
+    const c = this.player.seatContext(this.riders);
+    if (!c) return;
     c.run();
     sfx.grip();
-    if (this.player.mode === 'sit') {
-      this.hud.toast('MANSPREADING!', '#ff6b6b');
-    }
+    if (this.player.mode === 'sit') this.hud.toast('MANSPREADING!', '#ff6b6b');
   }
 
   // ... and came back up: let go of the pole.
@@ -210,6 +216,8 @@ export class Game {
     let label = c ? c.label : this.touch && this.player.gripping && this.playing() ? 'Hold on' : null;
     if (label && !this.touch) label += c && c.slot ? ' [hold SPACE]' : ' [SPACE]';
     this.ui.setAction(label, this.player.gripping);
+    const sc = this.playing() ? this.player.seatContext(this.riders) : null;
+    this.ui.setSeat(sc && (this.touch ? sc.label : `${sc.label} [M]`));
   }
 
   updateBoard(dt) {
@@ -357,6 +365,7 @@ export class Game {
     };
     (win ? sfx.success : sfx.fail)();
     this.ui.setAction(null);
+    this.ui.setSeat(null);
     this.narrate([TEXT[how]], [
       { label: 'Ride again', onClick: () => this.start(this.diffKey) },
       { label: 'Menu', kind: 'ghost', onClick: () => this.title() },

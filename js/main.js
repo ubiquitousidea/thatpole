@@ -30,10 +30,14 @@ function computeLayout() {
 
 const ui = {
   bar: $('btnbar'),
+  actions: $('actions'),
   actionBtn: $('action'),
+  seatBtn: $('seat'),
   onPress: null,
   onRelease: null,
+  onSit: null,
   actionLabel: null,
+  seatLabel: null,
 
   setButtons(list) {
     this.bar.replaceChildren(...list.map((b) => {
@@ -59,13 +63,21 @@ const ui = {
     if (label) this.actionBtn.textContent = label;
   },
 
+  // The seat button: what M does right now (sit down or stand up), if anything.
+  setSeat(label) {
+    if (label === this.seatLabel) return;
+    this.seatLabel = label;
+    this.seatBtn.hidden = !label;
+    if (label) this.seatBtn.textContent = label;
+  },
+
   layout(L) {
     document.documentElement.style.setProperty('--px', `${L.PX}px`);
     Object.assign(this.bar.style, {
       right: `${window.innerWidth - (L.W - 8) * L.PX}px`,
       bottom: `${window.innerHeight - (L.narr.y - 3) * L.PX}px`,
     });
-    Object.assign(this.actionBtn.style, {
+    Object.assign(this.actions.style, {
       left: `${8 * L.PX}px`,
       bottom: `${window.innerHeight - (L.narr.y - 3) * L.PX}px`,
     });
@@ -81,6 +93,8 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
   ui.actionBtn.addEventListener(type, () => ui.onRelease && ui.onRelease());
 }
 ui.actionBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+// The seat button is a tap, like M.
+ui.seatBtn.addEventListener('click', () => ui.onSit && ui.onSit());
 // Keep SPACE from also pressing whichever button has focus.
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') e.preventDefault();
