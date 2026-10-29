@@ -75,12 +75,12 @@ export class Game {
     this.board();
   }
 
-  title() {
+  title(pages = INTRO) {
     this.state = 'title';
     this.setup(this.timeKey);
     this.player.active = false;
     sfx.engine.silence();
-    this.narrate(INTRO, Object.entries(TIMES).map(([key, d]) => ({
+    this.narrate(pages, Object.entries(TIMES).map(([key, d]) => ({
       label: d.label,
       onClick: () => this.choose(+key),
     })));
@@ -370,7 +370,7 @@ export class Game {
     this.ui.setAction(null);
     this.ui.setSeat(null);
     this.narrate([TEXT[how]], [
-      { label: 'Ride again', onClick: () => this.start(this.timeKey) },
+      { label: 'Ride again', onClick: () => this.title(INTRO.slice(-1)) },
       { label: 'Menu', kind: 'ghost', onClick: () => this.title() },
     ]);
   }
