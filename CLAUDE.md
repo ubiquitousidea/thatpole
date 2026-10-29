@@ -4,14 +4,16 @@ See README.md for what the game is and the file map. This file covers the things
 
 ## Running
 - Use `/usr/bin/python3 -m http.server 8000`. There's no build step and no package.json. Three.js `0.160.0` (plus `three/addons/` for `BufferGeometryUtils`) comes from the import map in `index.html`.
-- Check the pure modules without a browser: `node -e "import('./js/ride.js').then(m=>m.selfTest())"` and the same with `./js/layout.js` and `./js/sun.js`.
+- Check the pure modules without a browser: `node -e "import('./js/ride.js').then(m=>m.selfTest())"` and the same with `./js/layout.js`, `./js/stations.js` and `./js/sun.js`.
 
 ## Coordinates
 - The car never moves. It sits at the origin, runs along z with the front of the train toward -z, and has x across the car, y up, and the floor at y = 0. The route group slides by `(0, -trackY(u), u)` (`Route.place`), where u is the distance along the track from Queensboro Plaza (u = 0) to Lex (u = `ROUTE_LEN`). Route objects sit at local z = -u, at absolute heights. The street is at y = -7.
 - Train acceleration `a` is positive when speeding up. It acts on bodies as a pseudo-force toward +z. The balance angle `theta` is positive when leaning toward the front of the train. Speeding up tips you back, so you lean forward against it.
 - The camera's yaw follows the eulergame convention, facing (-sin yaw, -cos yaw). Bodies face their local +z, so `body.yaw = cameraYaw + PI`.
 - The route is straight. The car's front (-z) points at compass bearing `TRAIN_BEARING` (300°, Queensboro Plaza toward Lex), so +x is bearing 30°. `sunInCar(hour)` in sun.js uses that to put the morning sun behind the train.
-- Doors open on +x at Queensboro Plaza and -x at Lex. `walkRects(openSide, platform)` in layout.js is the area where a body's center may go. Movement slides along its edges (`Player.moveBy`).
+- Doors open on -x at both stations. Queensboro Plaza's lower level is an island platform: our N runs on its north side, between it and Queens Plaza North (+x), and the Manhattan-bound 7's track (no train) is beyond the platform at `SEVEN_X`.
+- `walkRects(openSide, platform)` in layout.js is the area where a body's center may go, with `platform` a list of rects from `stationRects(station, r)` in stations.js. Movement slides along its edges (`Player.moveBy`).
+- The two stairways on the QBP platform (`QBP_STAIRS`) are walled channels you can only enter from the bottom. They climb `RISE` to the upper deck and stop short of a locked gate. While the train is still at QBP (`rideT === 0`), `Game` passes `ground` (`groundY` in stations.js) to the player, which sets `pos.y`. Everything else stays at y = 0. Staying on the stairs past the doors gives the `missed` ending.
 
 ## Gameplay tuning
 - The pendulum constants live at the top of `js/player.js` (`K, C, G, LEAN, LEAN_EASE, GRIP_LIMIT`, and `FK, FC, FG, FREE_LIMIT` for standing free). Jolt sizes are in `js/ride.js` (`START_JOLT`, `STOP_JOLT`, track bumps). They were tuned by simulating against the real ride profile:
@@ -39,10 +41,13 @@ See README.md for what the game is and the file map. This file covers the things
 - Riders walking past a player who is on a pole or in a seat squeeze by silently. Only a player standing in the aisle, or one blocking riders who are getting off at Lex, counts as blocking. Before that rule, a calm ride racked up about 28 "grumbles". A blocked rider also waits 1 s before getting annoyed, because the seat rush at boarding passes a player who is still walking in the aisle.
 
 ## Look of the car
-- The car is the R68 the N ran around 2015. The interior comes from a photo the user picked (danphotographycool.com, `_dsc9122`, "R68 N Train Interior"). The exterior comes from the user's own photos of R68A cars 5490 and 5491 at Queensboro Plaza.
+- The car is the R68 the N ran around 2015. The interior comes from a photo the user picked (danphotographycool.com, `_dsc9122`, "R68 N Train Interior"). Seat shapes and pole positions follow the user's own photo, `IMG_1753.jpeg` (not committed). The inside is 2.80 m wide (`CAR.halfW` 1.40), and the outside is 10 ft (3.05 m). The exterior comes from the user's own photos of R68A cars 5490 and 5491 at Queensboro Plaza.
   - It is a 75 ft car with four doors per side and 72 seats. Between each pair of doors there's a three-seat wall bench beside each door. In the middle is a pod of four: two two-seat rows back to back on a shared seat back at `BAYS[i]`. The front row faces forward (-z), toward its bench, and the rear row faces back. The car ends have three-seat benches.
   - Seats have a `kind` (`wall` or `cross`), a `yaw` (the sitter's facing) and a `front` (the aisle spot you stand up to). Use those, not `side`, to place or face a sitter.
   - The aisle is narrow beside the pods: `walkRects` allows |x| up to `BAY_X - PLAYER_R` there and up to `KNEE_X - PLAYER_R` in front of the wall benches. Each pod has one pole at the aisle end of its shared back, with two grip slots.
+  - The pod pole stands on the pod's back (`POD_TOP`), not on the floor. Each door has a floor-to-ceiling pole in the middle of the vestibule, and each bench has a stanchion at its door end, at the front corner of the seat pan (`POLE_X`). The stanchion has a tube armrest and a windscreen bar, not a partition.
+  - Benches and pods are cantilevered off the wall, with cream frames, nothing under them but the heater grille, and no partition at a bench's pod end. Build the pod's tapered end panel from boxes: `mergeStatic` can't mix indexed geometry (boxes) with non-indexed geometry (ExtrudeGeometry).
+  - Riders are slim enough that the widest, about 0.44 m across the shoulders with arms, fits one 0.44 m seat (`Body` in body.js).
   - The overhead rails are at `RAIL_Y` (layout.js, 1.85 m), low enough that most of the smaller riders reach them.
   - The walls are wood-grain laminate (`woodTexture()`, tiled per meter with `box(..., { tile })`), with one big window per door section over the pod and none at the car ends.
   - The seats are orange and yellow buckets on cream frames, under a cream ceiling, over a dark glossy floor. The colors are in `COLORS` and `SEAT_COLORS` at the top of `js/car.js`.
@@ -52,7 +57,7 @@ See README.md for what the game is and the file map. This file covers the things
     - Beveled ends with safety bars, plus trucks and wheels underneath.
     - `numberPlates()`: a number plate (5490 for ours) and a flag by each end door.
     - `cabEnd()`: the front and rear cabs, with headlights in front and red markers at the back.
-- Poles and seat-end partitions have a little emissive glow, because a tunnel lit only by the three car lamps otherwise turns their camera-facing sides black.
+- Poles and the cream seat frames have a little emissive glow, because a tunnel lit only by the three car lamps otherwise turns their camera-facing sides black.
 
 ## Rendering
 - Draw calls matter, especially on phones. `mergeStatic` (pixels.js) bakes each static group into one mesh per material.

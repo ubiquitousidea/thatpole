@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAR, DOOR_Z, DOOR_HALF, BENCHES, BAYS, SEATS, POLES, SEAT_H, SEAT_W, POLE_X, BAY_X, BENCH_LEN, RAIL_Y } from './layout.js';
+import { CAR, DOOR_Z, DOOR_HALF, BENCHES, BAYS, SEATS, POLES, SEAT_H, SEAT_W, SEAT_D, POLE_X, BAY_X, POD_TOP, RAIL_X, RAIL_Y } from './layout.js';
 import { canvasTexture, speckle, dither, text, bullet, std, box, panel, mergeStatic } from './pixels.js';
 
 // The R68 car the player rides, built from the floor plan in layout.js, plus
@@ -25,7 +25,7 @@ const NUMBERS = { '-2': 5492, '-1': 5491, 0: 5490, 1: 5489, 2: 5488 };
 // outside.
 const COLORS = {
   wood: '#8a5a32', shell: '#d4d8dc', rib: '#9ea4ab', roof: '#8d9298', ceiling: '#eee7d2', seatEnd: '#c9c0a6',
-  pole: '#dcdad2', rubber: '#1d1f22', skirt: '#d6cca3', under: '#26282c',
+  pole: '#dcdad2', rubber: '#1d1f22', under: '#26282c',
 };
 const SEAT_COLORS = ['#f07c1c', '#f5bf26']; // orange, yellow, alternating
 const ADS = [
@@ -49,7 +49,6 @@ export function buildCar() {
     seatEnd: std(COLORS.seatEnd, 0.6, 0, { emissive: '#4a4536' }),
     pole: std(COLORS.pole, 0.35, 0.15, { emissive: '#6a675e' }),
     rubber: std(COLORS.rubber, 0.9),
-    skirt: std(COLORS.skirt, 0.8),
     under: std(COLORS.under, 0.9),
     wheel: std('#3c3835', 0.6, 0.4),
     glass: new THREE.MeshStandardMaterial({ color: '#9fb4c4', transparent: true, opacity: 0.18, roughness: 0.1, depthWrite: false }),
@@ -60,6 +59,7 @@ export function buildCar() {
     head: new THREE.MeshBasicMaterial({ color: '#fffbe8' }),
     lit: new THREE.MeshBasicMaterial({ color: '#4d463c' }),
     vent: new THREE.MeshStandardMaterial({ map: grilleTexture(), roughness: 0.8 }),
+    heater: new THREE.MeshStandardMaterial({ map: grilleTexture(), roughness: 0.5, metalness: 0.3 }),
     flag: new THREE.MeshStandardMaterial({ map: flagTexture(), roughness: 0.7 }),
     route: new THREE.MeshBasicMaterial({ map: routeTexture() }),
   };
@@ -107,7 +107,7 @@ export function buildCar() {
     for (const z of DOOR_Z) box(group, M.wall, xr, [DOOR_H, WALL_TOP], [z - DOOR_HALF, z + DOOR_HALF], wood);
     for (const dir of [-1, 1]) {
       const leaves = new THREE.Group();
-      for (const z of DOOR_Z) doorLeaf(leaves, M, dir, s * (CAR.halfW + 0.075), z + dir * DOOR_HALF / 2);
+      for (const z of DOOR_Z) doorLeaf(leaves, M, dir, s * (CAR.halfW + 0.06), z + dir * DOOR_HALF / 2);
       group.add(mergeStatic(leaves));
       doors.push({ leaves, side: s, dir });
     }
@@ -123,45 +123,75 @@ export function buildCar() {
     box(group, M.dark, [-0.45, 0.45], [1.0, 1.75], zr);
   }
 
-  // Seats: a bucket and backrest each, on a cream frame. Wall benches face
-  // across the car. Each pod is two rows back to back, each facing its bench.
+  // Seats: orange and yellow buckets on cream frames, all hung off the wall
+  // with nothing under them but the heater grille, as in the photo. Wall
+  // benches face across the car. Each pod is two rows back to back, each
+  // facing its bench, with a cream end panel at the aisle.
   for (const seat of SEATS) {
     const s = seat.side, x = seat.x, z = seat.z;
     if (seat.kind === 'wall') {
       const seatMat = M.seats[Math.floor((z + 20) / SEAT_W + 0.5) % 2];
       const zr = [z - SEAT_W / 2 + 0.015, z + SEAT_W / 2 - 0.015];
-      box(group, seatMat, [s * (CAR.halfW - 0.47), s * (CAR.halfW - 0.02)], [SEAT_H - 0.05, SEAT_H], zr);
+      box(group, seatMat, [s * (CAR.halfW - SEAT_D + 0.02), s * (CAR.halfW - 0.02)], [SEAT_H - 0.05, SEAT_H], zr);
       const back = box(group, seatMat, [s * (CAR.halfW - 0.07), s * (CAR.halfW - 0.01)], [SEAT_H, SEAT_H + 0.48], zr);
       back.rotation.z = s * 0.08;
-      box(group, M.skirt, [s * (CAR.halfW - 0.4), s * CAR.halfW], [0, SEAT_H - 0.05], zr);
     } else {
-      const f = seat.facing, xr = [x - 0.21, x + 0.21];
+      const f = seat.facing, xr = [x - 0.205, x + 0.205];
       const seatMat = M.seats[(f > 0 ? 1 : 0) ^ (Math.abs(x) > 0.9 ? 1 : 0)];
-      box(group, seatMat, xr, [SEAT_H - 0.05, SEAT_H], [z - 0.21, z + 0.21]);
-      box(group, seatMat, xr, [SEAT_H - 0.05, SEAT_H + 0.55], [z - f * 0.26, z - f * 0.21]);
-      box(group, M.skirt, [x - 0.18, x + 0.18], [0, SEAT_H - 0.05], [z - 0.16, z + 0.16]);
+      box(group, seatMat, xr, [SEAT_H - 0.05, SEAT_H], [z - 0.2, z + 0.2]);
+      box(group, seatMat, xr, [SEAT_H - 0.05, POD_TOP - 0.05], [z - f * 0.26, z - f * 0.21]);
     }
   }
-  // The pods' shared back gets a cream cap; its aisle end is a stanchion.
+  // Each run of bench seats: a cream frame with a lip under the buckets, a cap
+  // at each end, and the heater grille along the bottom of the wall.
+  for (const run of benchRuns()) {
+    const { s, z0, z1 } = run;
+    box(group, M.seatEnd, [s * (CAR.halfW - SEAT_D), s * CAR.halfW], [SEAT_H - 0.11, SEAT_H - 0.05], [z0, z1]);
+    box(group, M.seatEnd, [s * (CAR.halfW - SEAT_D), s * (CAR.halfW - SEAT_D + 0.025)], [SEAT_H - 0.11, SEAT_H + 0.01], [z0, z1]);
+    box(group, M.heater, [s * (CAR.halfW - 0.14), s * CAR.halfW], [0.04, 0.32], [z0 + 0.05, z1 - 0.05], { tile: 0.12 });
+    for (const z of [z0, z1]) {
+      box(group, M.seatEnd, [s * (CAR.halfW - SEAT_D), s * CAR.halfW], [SEAT_H - 0.11, SEAT_H + 0.06], [z - 0.012, z + 0.012]);
+      box(group, M.seatEnd, [s * (CAR.halfW - 0.12), s * CAR.halfW], [SEAT_H, SEAT_H + 0.5], [z - 0.012, z + 0.012]);
+    }
+  }
+  // The pods: a cream shell under both rows, a cap on the shared back, and the
+  // end panel, which tapers from the cap down to both seat fronts. Its pole
+  // stands on the cap.
   for (const m of BAYS) for (const s of [-1, 1]) {
-    box(group, M.seatEnd, [s * (BAY_X + 0.01), s * CAR.halfW], [SEAT_H + 0.55, SEAT_H + 0.6], [m - 0.055, m + 0.055]);
+    const inner = s * (BAY_X + 0.03), outer = s * (CAR.halfW - 0.02);
+    box(group, M.seatEnd, [inner, outer], [SEAT_H - 0.12, SEAT_H - 0.05], [m - 0.47, m + 0.47]);
+    box(group, M.seatEnd, [s * (BAY_X + 0.01), s * CAR.halfW], [POD_TOP - 0.05, POD_TOP], [m - 0.06, m + 0.06]);
+    box(group, M.heater, [s * (CAR.halfW - 0.14), s * CAR.halfW], [0.04, 0.32], [m - 0.45, m + 0.45], { tile: 0.12 });
+    const ex = [s * BAY_X, s * (BAY_X + 0.03)];
+    box(group, M.seatEnd, ex, [SEAT_H - 0.14, SEAT_H + 0.06], [m - 0.47, m + 0.47]);
+    box(group, M.seatEnd, ex, [SEAT_H - 0.3, SEAT_H - 0.14], [m - 0.26, m + 0.26]);
+    // The taper, in steps that narrow toward the cap.
+    const n = 5, y0 = SEAT_H + 0.06, y1 = POD_TOP - 0.05;
+    for (let k = 0; k < n; k++) {
+      const half = 0.47 - (0.47 - 0.07) * (k + 1) / n;
+      box(group, M.seatEnd, ex, [y0 + (y1 - y0) * k / n, y0 + (y1 - y0) * (k + 1) / n], [m - half, m + half]);
+    }
+    for (const e of [-1, 1]) tube(group, M.seatEnd, [s * (BAY_X + 0.015), y0, m + e * 0.47], [s * (BAY_X + 0.015), y1, m + e * 0.07], 0.022);
   }
   for (const p of POLES) {
-    box(group, M.pole, [p.x - 0.022, p.x + 0.022], [0, H], [p.z - 0.022, p.z + 0.022]);
-    if (Math.abs(p.x) === POLE_X) {
-      const s = Math.sign(p.x);
-      box(group, M.seatEnd, [s * (POLE_X + 0.03), s * CAR.halfW], [0.15, 1.2], [p.z - 0.015, p.z + 0.015]);
-    }
-  }
-  // Partitions at the pod end of each bench, which the pod's riders face.
-  for (const b of BENCHES) if (!b.end) for (const s of [-1, 1]) for (const z of [b.z0 + BENCH_LEN, b.z1 - BENCH_LEN]) {
-    box(group, M.seatEnd, [s * (POLE_X + 0.03), s * CAR.halfW], [0.15, 1.2], [z - 0.015, z + 0.015]);
+    const onPod = Math.abs(p.x) === BAY_X;
+    box(group, M.pole, [p.x - 0.022, p.x + 0.022], [onPod ? POD_TOP : 0, H], [p.z - 0.022, p.z + 0.022]);
+    if (Math.abs(p.x) !== POLE_X) continue;
+    // At a bench's door end: an armrest from the stanchion to the wall that
+    // drops to the seat, and a windscreen bar to the door post.
+    const s = Math.sign(p.x);
+    const door = DOOR_Z.reduce((a, d) => (Math.abs(d - p.z) < Math.abs(a - p.z) ? d : a));
+    const dir = Math.sign(p.z - door);
+    const za = p.z + dir * 0.03;
+    tube(group, M.pole, [p.x, 0.75, za], [s * (CAR.halfW - 0.1), 0.75, za]);
+    tube(group, M.pole, [s * (CAR.halfW - 0.1), 0.75, za], [s * (CAR.halfW - 0.1), SEAT_H + 0.02, za]);
+    tube(group, M.pole, [p.x, 0.85, p.z], [s * CAR.halfW, 1.05, door + dir * DOOR_HALF]);
   }
   // Overhead grab rails in front of each bench.
   for (const s of [-1, 1]) {
     for (const b of BENCHES) {
-      box(group, M.pole, [s * 0.53, s * 0.57], [RAIL_Y, RAIL_Y + 0.04], [b.z0 + 0.1, b.z1 - 0.1]);
-      for (const z of [b.z0 + 0.15, b.z1 - 0.15]) box(group, M.pole, [s * 0.54, s * 0.56], [RAIL_Y, H], [z - 0.01, z + 0.01]);
+      box(group, M.pole, [s * (RAIL_X - 0.02), s * (RAIL_X + 0.02)], [RAIL_Y, RAIL_Y + 0.04], [b.z0 + 0.1, b.z1 - 0.1]);
+      for (const z of [b.z0 + 0.15, b.z1 - 0.15]) box(group, M.pole, [s * (RAIL_X - 0.01), s * (RAIL_X + 0.01)], [RAIL_Y, H], [z - 0.01, z + 0.01]);
     }
   }
 
@@ -193,7 +223,7 @@ export function buildCar() {
   const filler = new THREE.Mesh(new THREE.BoxGeometry(CAR.halfW * 2, H, CAR.halfL * 2), M.lit);
   filler.position.y = H / 2;
   const shut = new THREE.Group();
-  for (const s of [-1, 1]) for (const dir of [-1, 1]) for (const z of DOOR_Z) doorLeaf(shut, M, dir, s * (CAR.halfW + 0.075), z + dir * DOOR_HALF / 2);
+  for (const s of [-1, 1]) for (const dir of [-1, 1]) for (const z of DOOR_Z) doorLeaf(shut, M, dir, s * (CAR.halfW + 0.06), z + dir * DOOR_HALF / 2);
   mergeStatic(shut);
   for (const k of [-2, -1, 1, 2]) {
     const car = new THREE.Group();
@@ -225,6 +255,31 @@ export function buildCar() {
       M.light.color.set(on ? '#fff3d4' : '#55524a');
     },
   };
+}
+
+// The bench seats in runs along the wall: { s, z0, z1 } for each.
+function benchRuns() {
+  const runs = [];
+  for (const s of [-1, 1]) {
+    const zs = SEATS.filter((q) => q.kind === 'wall' && q.side === s).map((q) => q.z).sort((a, b) => a - b);
+    for (const z of zs) {
+      const last = runs[runs.length - 1];
+      if (last && last.s === s && z - SEAT_W / 2 - last.z1 < 0.05) last.z1 = z + SEAT_W / 2;
+      else runs.push({ s, z0: z - SEAT_W / 2, z1: z + SEAT_W / 2 });
+    }
+  }
+  return runs;
+}
+
+// A round-ish bar of radius r from point a to point b, as a turned box.
+const UP = new THREE.Vector3(0, 1, 0);
+function tube(g, mat, a, b, r = 0.016) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const d = B.clone().sub(A);
+  const m = box(g, mat, [-r, r], [-d.length() / 2 - r, d.length() / 2 + r], [-r, r]);
+  m.position.copy(A).add(B).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(UP, d.normalize());
+  return m;
 }
 
 // A dark rubber gasket around a window in the plane x0..x1, centered on zc,
@@ -433,6 +488,7 @@ function grilleTexture() {
     c.fillStyle = '#202326';
     for (let x = 1; x < 8; x += 2) c.fillRect(x, 1, 1, 6);
   });
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   return tex;
 }
 

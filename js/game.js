@@ -1,7 +1,7 @@
 import { Riders } from './riders.js';
 import { buildRide, PORTAL, RIVER } from './ride.js';
 import { walkRects, CAR, DOOR_Z } from './layout.js';
-import { QBP_PLATFORM, LEX_PLATFORM } from './route.js';
+import { stationRects, groundY } from './stations.js';
 import { TIMES } from './settings.js';
 import { sfx } from './sfx.js';
 
@@ -13,7 +13,7 @@ const BOARDED_WAIT = 4;    // doors close this long after you're aboard
 const ARRIVE_TIME = 22;    // seconds the doors stay open at Lex
 const DOOR_TIME = 1.4;     // to open or shut
 const MOOD_LIMIT = 0.92;   // the car turns on you
-const QBP_SIDE = 1, LEX_SIDE = -1;
+const QBP_SIDE = -1, LEX_SIDE = -1; // both platforms are on the left
 
 const INTRO = [
   "Queensboro Plaza, a weekday morning in September. Your Manhattan-bound N is in. You need to get to Lexington Av/59 St.",
@@ -54,8 +54,9 @@ export class Game {
     this.ride = buildRide(this.diff, this.seed);
     if (this.riders) this.riders.dispose();
     this.riders = new Riders(this.world.scene, this.diff, this.seed);
-    this.player.reset(4.6, DOOR_Z[2] + 1.0, Math.PI / 2 - 0.25);
+    this.player.reset(-4.6, DOOR_Z[2] + 1.0, -(Math.PI / 2 - 0.25));
     this.rideT = 0;
+    this.station = 'qbp';
     this.doorSide = QBP_SIDE;
     this.doorOpen = 1;
     this.doorTarget = 1;
@@ -175,9 +176,7 @@ export class Game {
 
   rects() {
     if (this.doorOpen < 0.85) return walkRects(0);
-    const P = this.doorSide === QBP_SIDE ? QBP_PLATFORM : LEX_PLATFORM;
-    const r = 0.25;
-    return walkRects(this.doorSide, { x0: P.x0 - 0.3 + r, x1: P.x1 - r, z0: P.z0 + r, z1: P.z1 - r });
+    return walkRects(this.doorSide, stationRects(this.station, 0.25));
   }
 
   update(dt) {
@@ -200,7 +199,9 @@ export class Game {
       const slot = this.player.grabbable(this.riders);
       if (slot) this.grabSlot(slot);
     }
-    this.player.update(dt, { a, shake, rects: this.rects(), riders: this.riders });
+    // Until the train leaves Queensboro Plaza, the platform's stairs go up.
+    const ground = this.rideT === 0 ? (x, z) => groundY('qbp', x, z) : null;
+    this.player.update(dt, { a, shake, rects: this.rects(), riders: this.riders, ground });
     this.riders.update({ dt, player: this.player, a, shake, aboard: this.player.aboard && this.state !== 'end' && this.state !== 'title' });
 
     if (this.state === 'board') this.updateBoard(dt);
@@ -297,6 +298,7 @@ export class Game {
 
   arrive() {
     this.state = 'arrive';
+    this.station = 'lex';
     this.doorSide = LEX_SIDE;
     this.doorTarget = 1;
     this.arriveT = ARRIVE_TIME;

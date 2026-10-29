@@ -18,7 +18,7 @@ Three.js and the Press Start 2P font load from CDNs, so you need a network conne
 
 ## How it plays
 
-- **Board.** You start on the lower level at Queensboro Plaza on a weekday morning in September. Pick when you get there: 7 AM, 8 AM or 9 AM.
+- **Board.** You start on the lower level at Queensboro Plaza on a weekday morning in September, on the island platform between your N and the Manhattan-bound 7's track. The doors open on the left. Stairs climb toward the upper level, but the gate at the top is locked. Pick when you get there: 7 AM, 8 AM or 9 AM.
   - The time sets where the sun is: low and orange at 7, higher and white by 9, coming in behind the train and through the windows.
   - It also sets how packed the car is. 8 AM is the peak, with about 150 people in the car and every pole taken. 7 and 9 are easier.
   - It sets how often the dispatcher holds the train in the tunnel, and how quickly other riders take a free pole.
@@ -39,7 +39,8 @@ The end card shows your time on the pole, jolts ridden out, stumbles, grumbles c
 | `js/ride.js` | The ride as a pure function of time: a simulated speed profile with dispatcher holds, jolt pulses, tunnel shake, daylight and track height. Has a `selfTest()` |
 | `js/body.js` | Simple-form people: flat-shaded capsules on a joint hierarchy, skinned into one mesh each, pose tables, two-bone arm IK onto poles and rails, head tracking, lean |
 | `js/car.js` | The car's meshes: wood-paneled walls, windows, sliding doors, benches and pods, stanchions, rails, ads, end-wall destination signs, and the stainless outside shared by every car in the train (number plates, flags, cabs, trucks) |
-| `js/route.js` | Outside the car: Queensboro Plaza, Queens streets and the bridge, the elevated structure, the portal, the tunnel with lamps and signals, and the Lex platform |
+| `js/stations.js` | The platforms at Queensboro Plaza and Lex, and Queensboro Plaza's stairs: where you can walk and how high the ground is. Pure data with a `selfTest()` |
+| `js/route.js` | Outside the car: Queensboro Plaza (platform, the 7's track, stairs up to a locked gate), Queens streets and the bridge, the elevated structure, the portal, the tunnel with lamps and signals, and the Lex platform |
 | `js/world.js` | Scene, camera, the fisheye lens pass, the sun and sky for the entry time, sun shadows, lights and fog that follow daylight into the tunnel |
 | `js/sun.js` | Where the sun is at 7, 8 or 9 AM on a September day in New York (NOAA's solar position formula), in car coordinates. Has a `selfTest()` |
 | `js/player.js` | Walking, grabbing, sitting, the balance pendulum, stumbling, and the first-person camera in the player's head |

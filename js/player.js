@@ -53,7 +53,7 @@ export class Player {
     this.camera = camera;
     this.tilt = new Tilt();
     this.keys = new Set();
-    this.body = new Body(rng(99), { height: 1.78, build: 1.05, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a', fists: true, split: true });
+    this.body = new Body(rng(99), { height: 1.78, build: 1.0, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a', fists: true, split: true });
     this.body.hideHead();
     scene.add(this.body.root);
     this.pos = new THREE.Vector3();
@@ -102,7 +102,7 @@ export class Player {
     if (this.onRelease) this.onRelease();
   }
 
-  reset(x = 4, z = 0, yaw = -Math.PI / 2) {
+  reset(x = -4, z = 0, yaw = Math.PI / 2) {
     this.pos.set(x, 0, z);
     this.yaw = yaw;          // camera yaw: you face (-sin yaw, -cos yaw)
     this.headYaw = 0;
@@ -319,6 +319,7 @@ export class Player {
     if (inRects(rects, nx, nz)) p.set(nx, 0, nz);
     else if (inRects(rects, nx, p.z)) p.x = nx;
     else if (inRects(rects, p.x, nz)) p.z = nz;
+    p.y = ctx.ground ? ctx.ground(p.x, p.z) : 0;
     for (const pole of POLES) pushOut(p, pole.x, pole.z, POLE_R + PLAYER_R);
     const now = new Set();
     for (const r of ctx.riders.list) {
