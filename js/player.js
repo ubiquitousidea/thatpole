@@ -53,7 +53,7 @@ export class Player {
     this.camera = camera;
     this.tilt = new Tilt();
     this.keys = new Set();
-    this.body = new Body(rng(99), { height: 1.78, build: 1.05, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a', fists: true });
+    this.body = new Body(rng(99), { height: 1.78, build: 1.05, top: '#b5303a', bottom: '#2d3a5a', skin: '#d19a6a', fists: true, split: true });
     this.body.hideHead();
     scene.add(this.body.root);
     this.pos = new THREE.Vector3();

@@ -1,12 +1,19 @@
 import * as THREE from 'three';
 import { trackY, PORTAL, RIVER, ROUTE_LEN, rng } from './ride.js';
 import { canvasTexture, speckle, text, bullet, std, box, panel, mergeStatic } from './pixels.js';
+import { CAR } from './layout.js';
 
 // Everything outside the car, laid out along the track: track position u runs
 // along local -z, and heights are absolute (the street is at STREET). The car
 // stays at the origin, so the whole route group slides by (0, -trackY(u), u).
 
 const STREET = -7;
+const CUT_X = 2.8; // the outer face of the retaining walls in the cut
+// The street leaves the trench open from where the track drops into the cut
+// until the car's roof is below the street, past the portal, so the ground
+// never slices through the car on the way down.
+const CUT_U0 = firstU(0, (u) => trackY(u) < STREET + 1);
+const CUT_U1 = firstU(PORTAL, (u) => trackY(u) < STREET - CAR.height - 0.5);
 export const QBP_PLATFORM = { side: 1, x0: 1.55, x1: 8.5, z0: -60, z1: 60 };
 export const LEX_PLATFORM = { side: -1, x0: -8, x1: -1.55, z0: -75, z1: 75 };
 const TUNNEL_HALF = 2.3, TUNNEL_TOP = 4.2;
@@ -37,7 +44,8 @@ export class Route {
     const concrete = new THREE.MeshLambertMaterial({ map: canvasTexture(64, 64, speckle([150, 148, 140], [[[110, 108, 100], 0.1]], 3), [8, 60]) });
     box(g, concrete, [P.x0, P.x1], [y - 0.5, y], [P.z0, P.z1]);
     box(g, std('#f2c230', 0.7), [P.x0, P.x0 + 0.5], [y, y + 0.01], [P.z0, P.z1]);
-    // The upper level overhead: deck, cross girders, and columns.
+    // The upper level overhead: deck, cross girders, and columns. Its shade
+    // falls on the train.
     const steel = std('#45524c', 0.7, 0.3);
     box(g, std('#5b625e', 0.9), [-5.5, 9.5], [y + 4.7, y + 5.3], [P.z0, P.z1]);
     for (let z = P.z0; z <= P.z1; z += 5) box(g, steel, [-5.5, 9.5], [y + 4.35, y + 4.7], [z - 0.15, z + 0.15]);
@@ -75,17 +83,18 @@ export class Route {
       box(g, steel, [6.6, 7.1], [y, y + 0.42], [z - 0.9, z - 0.8]);
       box(g, steel, [6.6, 7.1], [y, y + 0.42], [z + 0.8, z + 0.9]);
     }
-    this.group.add(mergeStatic(g));
+    this.group.add(shade(mergeStatic(g)));
   }
 
   // Street, buildings and the Queensboro Bridge around the elevated stretch.
   queens() {
     const g = new THREE.Group();
-    const asphalt = new THREE.MeshLambertMaterial({ map: canvasTexture(64, 64, speckle([70, 72, 76], [[[50, 50, 54], 0.1], [[100, 100, 100], 0.04]], 9), [80, 160]) });
-    const street = new THREE.Mesh(new THREE.PlaneGeometry(600, 1200), asphalt);
-    street.rotation.x = -Math.PI / 2;
-    street.position.set(0, STREET, -300);
-    g.add(street);
+    const asphalt = new THREE.MeshLambertMaterial({ map: canvasTexture(64, 64, speckle([70, 72, 76], [[[50, 50, 54], 0.1], [[100, 100, 100], 0.04]], 9), [1, 1]) });
+    // The street, in pieces around the open trench (z runs 300 to -900).
+    ground(g, asphalt, -300, -CUT_X, -900, 300);
+    ground(g, asphalt, CUT_X, 300, -900, 300);
+    ground(g, asphalt, -CUT_X, CUT_X, -CUT_U0, 300);
+    ground(g, asphalt, -CUT_X, CUT_X, -900, -CUT_U1);
     const facades = ['#8c4a3a', '#a86a4a', '#7a6a5a', '#b9a68a', '#5f6870', '#9a8f86'].map((c, i) => facade(c, 31 + i));
     const rand = this.rand;
     for (let z = 120; z > -PORTAL - 200; z -= 14 + rand() * 10) {
@@ -136,7 +145,7 @@ export class Route {
     const y = trackY(PORTAL);
     for (const s of [-1, 1]) box(g, concrete, [s * TUNNEL_HALF, s * 9], [y - 1.4, STREET + 3], [-PORTAL, -PORTAL + 1]);
     box(g, concrete, [-TUNNEL_HALF, TUNNEL_HALF], [y + TUNNEL_TOP, STREET + 3], [-PORTAL, -PORTAL + 1]);
-    this.group.add(mergeStatic(g));
+    this.group.add(shade(mergeStatic(g)));
   }
 
   // Tunnel segments from the portal to Lex: walls, roof, invert, cables,
@@ -243,6 +252,34 @@ export class Route {
     }
     this.group.add(mergeStatic(g));
   }
+}
+
+function firstU(from, test) {
+  let u = from;
+  while (!test(u)) u += 1;
+  return u;
+}
+
+// A flat patch of ground at street level, x0..x1 by z0..z1, its texture tiled
+// in world space (one tile per 7.5 m) so the patches line up.
+function ground(g, mat, x0, x1, z0, z1) {
+  const T = 7.5;
+  const geo = new THREE.PlaneGeometry(x1 - x0, z1 - z0);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, (x0 + uv.getX(i) * (x1 - x0)) / T, (z1 - uv.getY(i) * (z1 - z0)) / T); // +v runs toward -z
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set((x0 + x1) / 2, STREET, (z0 + z1) / 2);
+  g.add(m);
+}
+
+// Structure near the track throws shade on the car and takes the car's.
+function shade(group) {
+  group.traverse((o) => {
+    if (!o.isMesh || o.material.isMeshBasicMaterial) return;
+    o.castShadow = o.receiveShadow = true;
+  });
+  return group;
 }
 
 function facade(color, seed) {

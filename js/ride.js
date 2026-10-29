@@ -19,7 +19,7 @@ const STOP_JOLT = 2.4;     // and of the rock-back at a halt
 const HOLD_AT = [[], [900], [780, 1060]];
 
 // Track height: elevated at Queensboro Plaza, down a ramp into the portal, a dip
-// under the river, then level into Lex. The street is at y = -10.
+// under the river, then level into Lex. The street is at y = -7 (route.js).
 export function trackY(u) {
   if (u < 200) return 0;
   if (u < 560) return -16 * smooth((u - 200) / 360);
@@ -84,7 +84,7 @@ function pulse(tau, w) {
   return 0;
 }
 
-// diff: a DIFFICULTY row. t = 0 is the moment the doors close at Queensboro Plaza.
+// diff: a TIMES row (settings.js). t = 0 is the moment the doors close at Queensboro Plaza.
 export function buildRide(diff, seed = 1) {
   const rand = rng(seed);
   const holds = HOLD_AT[diff.holds] || [];
@@ -198,10 +198,10 @@ function hash(n) {
   return x - Math.floor(x);
 }
 
-export function selfTest(difficulty) {
+export function selfTest(times) {
   const issues = [];
-  const diffs = difficulty ? Object.entries(difficulty)
-    : [['easy', { jolt: 0.7, holds: 0 }], ['normal', { jolt: 1, holds: 1 }], ['rush', { jolt: 1.3, holds: 2 }]];
+  const diffs = times ? Object.entries(times)
+    : [['7 AM', { jolt: 1, holds: 0 }], ['8 AM', { jolt: 1, holds: 2 }], ['9 AM', { jolt: 1, holds: 1 }]];
   for (const [name, d] of diffs) {
     const ride = buildRide(d, 7);
     let lastU = 0;

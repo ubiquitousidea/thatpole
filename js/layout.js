@@ -3,9 +3,10 @@
 // with the front of the train toward -z; x is across the car, and y = 0 is the
 // car floor, level with the platforms.
 //
-// R68 seating: between each pair of doors, a short bench along the wall next
-// to each door, and in the middle a bay of two-seat rows facing each other
-// across the window. The car ends have short benches.
+// R68 seating: between each pair of doors, a three-seat bench along the wall
+// next to each door, and in the middle a pod of two two-seat rows back to back
+// under the window, each row facing its own bench. The car ends have
+// three-seat benches.
 
 export const CAR = {
   halfW: 1.35,      // inside the walls
@@ -15,18 +16,20 @@ export const CAR = {
 };
 export const DOOR_Z = [-8.55, -2.85, 2.85, 8.55]; // four double doors per side
 export const DOOR_HALF = 0.635;                   // 50 in openings
-export const SEAT_W = 0.5;
+export const SEAT_W = 0.44;
 export const SEAT_H = 0.45;
 export const SEAT_X = CAR.halfW - 0.24; // center of a wall bench's seat pan
 export const KNEE_X = 0.62;             // seated knees on a wall bench reach this far in
 export const POLE_X = 0.88;             // bench-end stanchions
-export const BAY_X = 0.46;              // the cross seats' aisle edge
-export const BAY_HALF = 0.92;           // a bay runs this far either side of its middle
-export const CROSS_X = [0.68, 1.12];    // the two seats of a cross row, inner and outer
-const ROW_Z = 0.62;                     // a cross row's seat center, from the bay middle
-const WALL_SEATS = 2;                   // bench seats by each door, between doors
+export const BAY_X = 0.46;              // the pod seats' aisle edge
+export const BAY_HALF = 0.5;            // a pod runs this far either side of its middle
+export const CROSS_X = [0.68, 1.12];    // the two seats of a pod row, inner and outer
+export const ROW_Z = 0.26;              // a pod row's seat center, from the shared back
+export const BENCH_LEN = 0.06 + 3 * SEAT_W; // a three-seat bench, from the door edge
+const WALL_SEATS = 3;                   // bench seats by each door, between doors
 const END_SEATS = 3;                    // bench seats at each car end
 export const HAND_Y = [1.3, 1.42, 1.54];
+export const RAIL_Y = 1.85;             // the overhead grab rails, low enough for most riders
 export const PLAYER_R = 0.2;
 export const RIDER_R = 0.24;
 export const POLE_R = 0.03;
@@ -44,7 +47,8 @@ export const BENCHES = (() => {
   return out;
 })();
 
-// The middles of the cross-seat bays: one per stretch between doors.
+// The middles of the seat pods (the shared seat back): one per stretch
+// between doors.
 export const BAYS = BENCHES.filter((b) => !b.end).map((b) => b.mid);
 
 // kind 'wall' seats face across the car; kind 'cross' seats face along it.
@@ -60,17 +64,18 @@ export const SEATS = (() => {
       if (b.end) {
         // Against the end wall at the car end, toward the door.
         const atStart = b.z0 === -CAR.halfL;
-        for (let i = 0; i < END_SEATS; i++) wall(side, atStart ? b.z1 - 0.3 - i * SEAT_W : b.z0 + 0.3 + i * SEAT_W);
+        for (let i = 0; i < END_SEATS; i++) wall(side, atStart ? b.z1 - 0.28 - i * SEAT_W : b.z0 + 0.28 + i * SEAT_W);
         continue;
       }
       for (let i = 0; i < WALL_SEATS; i++) {
-        wall(side, b.z0 + 0.3 + i * SEAT_W);
-        wall(side, b.z1 - 0.3 - i * SEAT_W);
+        wall(side, b.z0 + 0.06 + (i + 0.5) * SEAT_W);
+        wall(side, b.z1 - 0.06 - (i + 0.5) * SEAT_W);
       }
-      // The bay: a row facing +z behind the middle, a row facing -z ahead of it.
-      for (const f of [1, -1]) {
+      // The pod: back to back at the middle, the front row facing forward (-z)
+      // at its bench, the rear row facing back (+z) at the other.
+      for (const f of [-1, 1]) {
         for (const cx of CROSS_X) {
-          const z = b.mid - f * ROW_Z;
+          const z = b.mid + f * ROW_Z;
           seats.push({ kind: 'cross', side, facing: f, x: side * cx, z, yaw: f > 0 ? 0 : Math.PI, front: { x: side * 0.14, z } });
         }
       }
@@ -84,7 +89,7 @@ export const SEATS = (() => {
 export const SLOTS = [];
 
 // Vertical stanchions: one at each bench end beside a door, one in the middle
-// of each door vestibule, and one at each corner of a bay by the aisle. Each
+// of each door vestibule, and one at the aisle end of each pod's back. Each
 // has grip slots around it: where a rider stands, and how high the hand goes.
 export const POLES = (() => {
   const poles = [];
@@ -104,10 +109,7 @@ export const POLES = (() => {
   }
   for (const m of BAYS) {
     for (const side of [-1, 1]) {
-      for (const dir of [-1, 1]) {
-        const z = m + dir * BAY_HALF;
-        poles.push({ x: side * BAY_X, z, slots: [{ x: side * 0.16, z }] });
-      }
+      poles.push({ x: side * BAY_X, z: m, slots: [{ x: side * 0.18, z: m - 0.25 }, { x: side * 0.18, z: m + 0.25 }] });
     }
   }
   poles.forEach((p, pi) => {
@@ -121,7 +123,7 @@ export const POLES = (() => {
   return poles;
 })();
 
-// The aisle is wide in front of wall benches and narrow between bays.
+// The aisle is wide in front of wall benches and narrow beside the pods.
 function wideStretches() {
   const out = [];
   let z = -CAR.halfL;
@@ -174,7 +176,7 @@ export function insideCar(x, z) {
 
 export function selfTest() {
   const issues = [];
-  if (SEATS.length < 50 || SEATS.length > 70) issues.push(`seat count ${SEATS.length}`);
+  if (SEATS.length < 70 || SEATS.length > 80) issues.push(`seat count ${SEATS.length}`);
   const rects = walkRects();
   for (const s of SLOTS) {
     if (!inRects(rects, s.x, s.z)) issues.push(`slot ${s.id} not walkable`);

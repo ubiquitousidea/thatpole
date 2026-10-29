@@ -26,8 +26,10 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = new THREE.Quatern
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
 
-// Parts are built with one material per color, then each joint's parts are
-// baked into one vertex-colored mesh (see bake), so a body is a dozen draws.
+// Parts are built with one material per color, then baked into one
+// vertex-colored skinned mesh whose bones are the joints (see skin), so a body
+// is one draw. A split body (the player's own) bakes each joint separately
+// instead, so parts of it can be hidden.
 const mats = new Map();
 function mat(color) {
   if (!mats.has(color)) mats.set(color, new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.85 }));
@@ -58,11 +60,11 @@ function joint(parent, x, y, z) {
 }
 
 export class Body {
-  // rand: a seeded random function. opts: { height, skin, top, bottom, ... }.
+  // rand: a seeded random function. opts: { height, skin, top, bottom, split, ... }.
   constructor(rand, opts = {}) {
     const pick = (list) => list[Math.floor(rand() * list.length)];
-    const h = opts.height || 1.55 + rand() * 0.37;
-    const b = opts.build || 0.85 + rand() * 0.4;
+    const h = opts.height || 1.5 + rand() * 0.3;
+    const b = opts.build || 0.8 + rand() * 0.3;
     const skin = opts.skin || pick(SKIN);
     const top = opts.top || pick(TOPS);
     const bottom = opts.bottom || pick(BOTTOMS);
@@ -150,7 +152,8 @@ export class Body {
     });
     this.joints = [this.pelvis, this.spine, this.neck,
       ...this.arms.flatMap((a) => [a.sh, a.el]), ...this.legs.flatMap((l) => [l.hip, l.knee])];
-    for (const node of [...this.joints, this.head]) bake(node);
+    if (opts.split) for (const node of [...this.joints, this.head]) node.add(new THREE.Mesh(bake(node), BODY_MAT));
+    else this.skin([...this.joints, this.head]);
 
     this.poseName = 'stand';
     this.pelvisY = this.hipH;
@@ -162,7 +165,36 @@ export class Body {
     this.snap();
   }
 
-  // For the player, whose eyes are the camera.
+  // Bake every node's parts into one mesh skinned to the nodes themselves,
+  // bound in the rest pose, so posing the joints moves it as before.
+  skin(nodes) {
+    this.root.updateMatrixWorld(true);
+    const toRoot = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
+    const geos = [];
+    nodes.forEach((node, i) => {
+      const g = bake(node);
+      if (!g) return;
+      g.applyMatrix4(_m.multiplyMatrices(toRoot, node.matrixWorld));
+      const n = g.attributes.position.count;
+      const index = new Uint16Array(n * 4), weight = new Float32Array(n * 4);
+      for (let k = 0; k < n; k++) {
+        index[k * 4] = i;
+        weight[k * 4] = 1;
+      }
+      g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(index, 4));
+      g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weight, 4));
+      geos.push(g);
+    });
+    const mesh = new THREE.SkinnedMesh(mergeGeometries(geos), BODY_MAT);
+    this.root.add(mesh);
+    mesh.updateMatrixWorld(true);
+    mesh.bind(new THREE.Skeleton(nodes));
+    // Culling uses this, not the posed vertices: big enough for any lean.
+    mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, this.h * 0.5, 0), this.h * 0.8);
+    mesh.receiveShadow = true;
+  }
+
+  // For the player, whose eyes are the camera (a split body).
   hideHead() {
     this.head.visible = false;
     for (const c of this.neck.children) if (c.isMesh) c.visible = false;
@@ -326,10 +358,11 @@ export class Body {
   }
 }
 
-// Merge a node's own meshes into one, with each part's color as vertex colors.
+// Merge a node's own meshes into one geometry in the node's space, with each
+// part's color as vertex colors, and take the parts off the node.
 function bake(node) {
   const parts = node.children.filter((c) => c.isMesh);
-  if (parts.length === 0) return;
+  if (parts.length === 0) return null;
   const geos = parts.map((m) => {
     m.updateMatrix();
     let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
@@ -342,5 +375,5 @@ function bake(node) {
     node.remove(m);
     return g;
   });
-  node.add(new THREE.Mesh(geos.length === 1 ? geos[0] : mergeGeometries(geos), BODY_MAT));
+  return geos.length === 1 ? geos[0] : mergeGeometries(geos);
 }
