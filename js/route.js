@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { trackY, PORTAL, RIVER, ROUTE_LEN, rng } from './ride.js';
 import { canvasTexture, speckle, text, bullet, std, box, panel, mergeStatic } from './pixels.js';
 import { CAR } from './layout.js';
+import { QBP_PLATFORM, LEX_PLATFORM, QBP_STAIRS, SEVEN_X, RISE, STEPS, LANDING, GATE } from './stations.js';
 
 // Everything outside the car, laid out along the track: track position u runs
 // along local -z, and heights are absolute (the street is at STREET). The car
@@ -14,8 +15,6 @@ const CUT_X = 2.8; // the outer face of the retaining walls in the cut
 // never slices through the car on the way down.
 const CUT_U0 = firstU(0, (u) => trackY(u) < STREET + 1);
 const CUT_U1 = firstU(PORTAL, (u) => trackY(u) < STREET - CAR.height - 0.5);
-export const QBP_PLATFORM = { side: 1, x0: 1.55, x1: 8.5, z0: -60, z1: 60 };
-export const LEX_PLATFORM = { side: -1, x0: -8, x1: -1.55, z0: -75, z1: 75 };
 const TUNNEL_HALF = 2.3, TUNNEL_TOP = 4.2;
 const STEP = 5; // tunnel segment length
 const GREEN = new THREE.MeshBasicMaterial({ color: '#3dff6a' });
@@ -37,26 +36,46 @@ export class Route {
     this.group.position.set(0, -trackY(u), u);
   }
 
+  // The lower level: an island platform on our left, the 7's track beyond
+  // it, open air over Queens Plaza North on our right, and the upper level
+  // overhead. Two stairways climb from the platform through the upper deck
+  // to a locked gate.
   queensboroPlaza() {
     const g = new THREE.Group();
     const y = trackY(0);
     const P = QBP_PLATFORM;
     const concrete = new THREE.MeshLambertMaterial({ map: canvasTexture(64, 64, speckle([150, 148, 140], [[[110, 108, 100], 0.1]], 3), [8, 60]) });
+    const yellow = std('#f2c230', 0.7);
     box(g, concrete, [P.x0, P.x1], [y - 0.5, y], [P.z0, P.z1]);
-    box(g, std('#f2c230', 0.7), [P.x0, P.x0 + 0.5], [y, y + 0.01], [P.z0, P.z1]);
-    // The upper level overhead: deck, cross girders, and columns. Its shade
-    // falls on the train.
+    box(g, yellow, [P.x1 - 0.5, P.x1], [y, y + 0.01], [P.z0, P.z1]);
+    box(g, yellow, [P.x0, P.x0 + 0.5], [y, y + 0.01], [P.z0, P.z1]);
+    // The upper level overhead: deck, cross girders, and columns outside the
+    // tracks, with a hole over each stair. Its shade falls on the train.
     const steel = std('#45524c', 0.7, 0.3);
-    box(g, std('#5b625e', 0.9), [-5.5, 9.5], [y + 4.7, y + 5.3], [P.z0, P.z1]);
-    for (let z = P.z0; z <= P.z1; z += 5) box(g, steel, [-5.5, 9.5], [y + 4.35, y + 4.7], [z - 0.15, z + 0.15]);
-    for (let z = P.z0 + 2.5; z <= P.z1; z += 10) {
-      for (const x of [-3.4, 5.2]) box(g, steel, [x - 0.18, x + 0.18], [STREET, y + 4.7], [z - 0.18, z + 0.18]);
+    const X0 = SEVEN_X - 2.7, X1 = 2.9;
+    const hx0 = Math.min(...QBP_STAIRS.map((st) => st.x0)) - 0.15, hx1 = Math.max(...QBP_STAIRS.map((st) => st.x1)) + 0.15;
+    const holes = QBP_STAIRS.map((st) => [st.z0 + st.dir * 3, st.z1].sort((a, b) => a - b));
+    box(g, std('#5b625e', 0.9), [X0, hx0], [y + 4.7, y + RISE], [P.z0, P.z1]);
+    box(g, std('#5b625e', 0.9), [hx1, X1], [y + 4.7, y + RISE], [P.z0, P.z1]);
+    for (const [z0, z1] of around([P.z0, P.z1], holes)) box(g, std('#5b625e', 0.9), [hx0, hx1], [y + 4.7, y + RISE], [z0, z1]);
+    for (let z = P.z0; z <= P.z1; z += 5) {
+      if (holes.some(([a, b]) => z > a - 0.2 && z < b + 0.2)) {
+        box(g, steel, [X0, hx0], [y + 4.35, y + 4.7], [z - 0.15, z + 0.15]);
+        box(g, steel, [hx1, X1], [y + 4.35, y + 4.7], [z - 0.15, z + 0.15]);
+      } else box(g, steel, [X0, X1], [y + 4.35, y + 4.7], [z - 0.15, z + 0.15]);
     }
-    // Trackbeds: ours and the one across.
-    box(g, std('#3a332d', 1), [-5.5, P.x0], [y - 1.4, y - 1.0], [P.z0, P.z1]);
-    for (const x of [-0.72, 0.72, -4.2, -2.8]) box(g, std('#7c7c80', 0.4, 0.7), [x - 0.04, x + 0.04], [y - 1.0, y - 0.88], [P.z0 - 40, P.z1]);
-    // Railing at the back of the platform.
-    box(g, steel, [P.x1 - 0.05, P.x1], [y, y + 1.1], [P.z0, P.z1]);
+    for (let z = P.z0 + 2.5; z <= P.z1; z += 10) {
+      for (const x of [X0 + 0.2, X1 - 0.3]) box(g, steel, [x - 0.18, x + 0.18], [STREET, y + 4.7], [z - 0.18, z + 0.18]);
+    }
+    // Trackbeds and their edge girders: ours, and the 7's across the platform
+    // (with its third rail; no 7 train today).
+    for (const [x0, x1] of [[P.x1, X1 - 0.5], [X0 + 0.5, P.x0]]) {
+      box(g, std('#3a332d', 1), [x0, x1], [y - 1.4, y - 1.0], [P.z0, P.z1]);
+    }
+    for (const x of [X1 - 0.5, X0 + 0.5]) box(g, steel, [x - 0.15, x + 0.15], [y - 1.9, y - 0.7], [P.z0, P.z1]);
+    for (const x of [-0.72, 0.72, SEVEN_X - 0.72, SEVEN_X + 0.72]) box(g, std('#7c7c80', 0.4, 0.7), [x - 0.04, x + 0.04], [y - 1.0, y - 0.88], [P.z0 - 40, P.z1]);
+    box(g, std('#7c7c80', 0.4, 0.7), [SEVEN_X - 1.45, SEVEN_X - 1.35], [y - 1.0, y - 0.8], [P.z0, P.z1]);
+    box(g, std('#c9b98a', 0.8), [SEVEN_X - 1.5, SEVEN_X - 1.3], [y - 0.78, y - 0.74], [P.z0, P.z1]);
     // Station signs hanging from the upper deck, readable from the train.
     const sign = canvasTexture(140, 18, (c) => {
       c.fillStyle = '#111';
@@ -67,22 +86,25 @@ export class Route {
       bullet(c, 120, 10, 6, '#fccc0a', 'N');
       bullet(c, 133, 10, 6, '#fccc0a', 'W');
     });
+    const sx = P.x1 - 1.2;
     for (let z = P.z0 + 8; z < P.z1; z += 16) {
       const m = panel(g, sign, 2.8, 0.36, { basic: true });
-      m.position.set(P.x0 + 1.2, y + 3.2, z);
-      m.rotation.y = -Math.PI / 2;
+      m.position.set(sx + 0.01, y + 3.2, z);
+      m.rotation.y = Math.PI / 2;
       const back = panel(g, sign, 2.8, 0.36, { basic: true });
-      back.position.set(P.x0 + 1.22, y + 3.2, z);
-      back.rotation.y = Math.PI / 2;
-      box(g, steel, [P.x0 + 1.19, P.x0 + 1.23], [y + 3.38, y + 4.35], [z - 1.2, z - 1.15]);
-      box(g, steel, [P.x0 + 1.19, P.x0 + 1.23], [y + 3.38, y + 4.35], [z + 1.15, z + 1.2]);
+      back.position.set(sx - 0.01, y + 3.2, z);
+      back.rotation.y = -Math.PI / 2;
+      box(g, steel, [sx - 0.02, sx + 0.02], [y + 3.38, y + 4.35], [z - 1.2, z - 1.15]);
+      box(g, steel, [sx - 0.02, sx + 0.02], [y + 3.38, y + 4.35], [z + 1.15, z + 1.2]);
     }
-    // A couple of platform benches.
-    for (const z of [-20, 14, 34]) {
-      box(g, std('#7a5232', 0.8), [6.5, 7.2], [y + 0.42, y + 0.48], [z - 1, z + 1]);
-      box(g, steel, [6.6, 7.1], [y, y + 0.42], [z - 0.9, z - 0.8]);
-      box(g, steel, [6.6, 7.1], [y, y + 0.42], [z + 0.8, z + 0.9]);
+    // A couple of platform benches down the middle.
+    const bx = (hx0 + hx1) / 2;
+    for (const z of [-32, 32]) {
+      box(g, std('#7a5232', 0.8), [bx - 0.35, bx + 0.35], [y + 0.42, y + 0.48], [z - 1, z + 1]);
+      box(g, steel, [bx - 0.25, bx + 0.25], [y, y + 0.42], [z - 0.9, z - 0.8]);
+      box(g, steel, [bx - 0.25, bx + 0.25], [y, y + 0.42], [z + 0.8, z + 0.9]);
     }
+    for (const st of QBP_STAIRS) stairway(g, st, y, steel);
     this.group.add(shade(mergeStatic(g)));
   }
 
@@ -252,6 +274,62 @@ export class Route {
     }
     this.group.add(mergeStatic(g));
   }
+}
+
+// The pieces of the range [z0, z1] outside the sorted holes [a, b].
+function around([z0, z1], holes) {
+  const out = [];
+  let z = z0;
+  for (const [a, b] of [...holes].sort((p, q) => p[0] - q[0])) {
+    if (a > z) out.push([z, a]);
+    z = Math.max(z, b);
+  }
+  if (z < z1) out.push([z, z1]);
+  return out;
+}
+
+// One stairway from the platform (at y) up through the upper deck: solid
+// steps, stepped walls a meter above them, handrails, the space under the
+// landing walled off, a rail around the hole in the deck, and a locked gate
+// on the landing with a sign.
+function stairway(g, st, y, steel) {
+  const wall = std('#8d8a82', 1), step = std('#76736c', 0.95), nosing = std('#c9a23c', 0.8);
+  const len = Math.abs(st.z1 - st.z0), run = len / STEPS, rise = RISE / STEPS;
+  const span = (a, b) => [Math.min(a, b), Math.max(a, b)];
+  for (let k = 0; k < STEPS; k++) {
+    const za = st.z0 + st.dir * k * run, zb = za + st.dir * run;
+    const top = y + (k + 1) * rise;
+    box(g, step, [st.x0, st.x1], [y, top], span(za, zb));
+    box(g, nosing, [st.x0, st.x1], [top, top + 0.01], span(za, za + st.dir * 0.05));
+    for (const xr of [[st.x0 - 0.15, st.x0], [st.x1, st.x1 + 0.15]]) box(g, wall, xr, [y, top + 1.0], span(za, zb));
+  }
+  // Handrails along the walls, rising with the steps.
+  const ang = Math.atan2(RISE, len);
+  for (const x of [st.x0 + 0.05, st.x1 - 0.05]) {
+    const rail = box(g, steel, [-0.025, 0.025], [-0.025, 0.025], [-len / 2 / Math.cos(ang), len / 2 / Math.cos(ang)]);
+    rail.position.set(x, y + RISE / 2 + 0.9, (st.z0 + st.z1) / 2);
+    rail.rotation.x = -st.dir * ang;
+  }
+  // Under the landing, and the landing's walls up to the gate.
+  const far = st.z1 + st.dir * LANDING;
+  box(g, wall, [st.x0 - 0.15, st.x1 + 0.15], [y, y + 4.7], span(st.z1, far));
+  for (const xr of [[st.x0 - 0.15, st.x0], [st.x1, st.x1 + 0.15]]) box(g, wall, xr, [y + RISE, y + RISE + 1.0], span(st.z1, far));
+  // A rail across the low end of the hole in the deck.
+  const hole = st.z0 + st.dir * 3;
+  box(g, steel, [st.x0 - 0.15, st.x1 + 0.15], [y + RISE, y + RISE + 1.0], span(hole, hole - st.dir * 0.05));
+  // The gate: bars between two rails, and the sign facing the stairs.
+  const gz = st.z1 + st.dir * (GATE + 0.05);
+  const gr = span(gz - 0.02, gz + 0.02);
+  for (const yy of [0.1, 1.0, 1.95]) box(g, steel, [st.x0, st.x1], [y + RISE + yy, y + RISE + yy + 0.05], gr);
+  for (let x = st.x0 + 0.06; x < st.x1; x += 0.12) box(g, steel, [x - 0.015, x + 0.015], [y + RISE, y + RISE + 2.0], gr);
+  const tex = canvasTexture(64, 16, (c) => {
+    c.fillStyle = '#b5181c';
+    c.fillRect(0, 0, 64, 16);
+    text(c, 'NO ENTRY', 32, 4, '#fff', 8, 'center');
+  });
+  const m = panel(g, tex, 1.0, 0.25, { basic: true });
+  m.position.set((st.x0 + st.x1) / 2, y + RISE + 1.4, gz - st.dir * 0.04);
+  m.rotation.y = st.dir > 0 ? Math.PI : 0;
 }
 
 function firstU(from, test) {

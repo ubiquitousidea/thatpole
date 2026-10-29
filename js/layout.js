@@ -9,8 +9,8 @@
 // three-seat benches.
 
 export const CAR = {
-  halfW: 1.35,      // inside the walls
-  outerHalfW: 1.5,  // outside the stainless shell
+  halfW: 1.4,       // inside the walls
+  outerHalfW: 1.52, // outside the stainless shell: the R68 is 10 ft wide
   halfL: 11.4,      // a 75 ft car is about 22.9 m long
   height: 2.25,     // floor to ceiling
 };
@@ -18,12 +18,15 @@ export const DOOR_Z = [-8.55, -2.85, 2.85, 8.55]; // four double doors per side
 export const DOOR_HALF = 0.635;                   // 50 in openings
 export const SEAT_W = 0.44;
 export const SEAT_H = 0.45;
+export const SEAT_D = 0.47;             // a bench's depth from the wall to its front lip
 export const SEAT_X = CAR.halfW - 0.24; // center of a wall bench's seat pan
-export const KNEE_X = 0.62;             // seated knees on a wall bench reach this far in
-export const POLE_X = 0.88;             // bench-end stanchions
-export const BAY_X = 0.46;              // the pod seats' aisle edge
+export const KNEE_X = CAR.halfW - 0.73; // seated knees on a wall bench reach this far in
+export const POLE_X = CAR.halfW - SEAT_D; // bench-end stanchions, at the bench's front corner
+export const BAY_X = CAR.halfW - 0.06 - 2 * SEAT_W; // the pod's aisle end, past its end panel
 export const BAY_HALF = 0.5;            // a pod runs this far either side of its middle
-export const CROSS_X = [0.68, 1.12];    // the two seats of a pod row, inner and outer
+export const CROSS_X = [CAR.halfW - 0.25 - SEAT_W, CAR.halfW - 0.25]; // a pod row's two seats, inner and outer
+export const POD_TOP = 1.0;             // the top of a pod's shared back, where its pole starts
+export const RAIL_X = CAR.halfW - 0.8;  // the overhead rails, over the standing riders
 export const ROW_Z = 0.26;              // a pod row's seat center, from the shared back
 export const BENCH_LEN = 0.06 + 3 * SEAT_W; // a three-seat bench, from the door edge
 const WALL_SEATS = 3;                   // bench seats by each door, between doors
@@ -109,7 +112,8 @@ export const POLES = (() => {
   }
   for (const m of BAYS) {
     for (const side of [-1, 1]) {
-      poles.push({ x: side * BAY_X, z: m, slots: [{ x: side * 0.18, z: m - 0.25 }, { x: side * 0.18, z: m + 0.25 }] });
+      const sx = side * (BAY_X - 0.28);
+      poles.push({ x: side * BAY_X, z: m, slots: [{ x: sx, z: m - 0.25 }, { x: sx, z: m + 0.25 }] });
     }
   }
   poles.forEach((p, pi) => {
@@ -141,7 +145,7 @@ export const RAIL_SPOTS = (() => {
   const doorway = (z) => DOOR_Z.some((d) => Math.abs(z - d) < DOOR_HALF + 0.25);
   for (const side of [-1, 1]) {
     for (const [z0, z1] of wideStretches()) {
-      for (let z = z0 + 0.4; z < z1 - 0.3; z += 0.62) if (!doorway(z)) spots.push({ x: side * 0.36, z, side });
+      for (let z = z0 + 0.4; z < z1 - 0.3; z += 0.62) if (!doorway(z)) spots.push({ x: side * (KNEE_X - 0.26), z, side });
     }
   }
   spots.forEach((s, i) => (s.id = i));
@@ -150,7 +154,7 @@ export const RAIL_SPOTS = (() => {
 
 // Where a body's center may be. The aisle between the knees and seats, the
 // door vestibules across the full width, and, when the doors on a side are
-// open, the doorways and the platform beyond.
+// open, the doorways and the platform beyond (a list of rects).
 export function walkRects(openSide = 0, platform = null) {
   const r = PLAYER_R;
   const rects = [{ x0: -BAY_X + r, x1: BAY_X - r, z0: -CAR.halfL + r, z1: CAR.halfL - r }];
@@ -162,7 +166,7 @@ export function walkRects(openSide = 0, platform = null) {
       rects.push({ x0: Math.min(a, b), x1: Math.max(a, b), z0: z - DOOR_HALF + r, z1: z + DOOR_HALF - r });
     }
   }
-  if (openSide && platform) rects.push(platform);
+  if (openSide && platform) rects.push(...platform);
   return rects;
 }
 

@@ -64,7 +64,7 @@ export class Body {
   constructor(rand, opts = {}) {
     const pick = (list) => list[Math.floor(rand() * list.length)];
     const h = opts.height || 1.5 + rand() * 0.3;
-    const b = opts.build || 0.8 + rand() * 0.3;
+    const b = opts.build || 0.85 + rand() * 0.15;
     const skin = opts.skin || pick(SKIN);
     const top = opts.top || pick(TOPS);
     const bottom = opts.bottom || pick(BOTTOMS);
@@ -73,7 +73,7 @@ export class Body {
     this.h = h;
     const dims = this.dims = {
       thigh: 0.245 * h, shin: 0.245 * h, torso: 0.3 * h,
-      upper: 0.17 * h, fore: 0.16 * h, hipW: 0.085 * h * b, shW: 0.115 * h * b,
+      upper: 0.17 * h, fore: 0.16 * h, hipW: 0.075 * h * b, shW: 0.095 * h * b,
     };
     this.hipH = dims.thigh + dims.shin + 0.03 * h;
 
@@ -81,18 +81,18 @@ export class Body {
     this.root.rotation.order = 'YXZ';
     this.pelvis = joint(this.root, 0, this.hipH, 0);
     const hips = new THREE.Mesh(BOX, mat(bottom));
-    hips.scale.set(dims.hipW * 2 + 0.06, 0.12 * h, 0.13 * h * b);
+    hips.scale.set(dims.hipW * 2 + 0.05, 0.12 * h, 0.12 * h * b);
     this.pelvis.add(hips);
 
     this.spine = joint(this.pelvis, 0, 0.03 * h, 0);
     const chest = new THREE.Mesh(BOX, mat(top));
-    chest.scale.set(dims.shW * 2 + 0.02, dims.torso, 0.13 * h * b);
+    chest.scale.set(dims.shW * 2 + 0.02, dims.torso, 0.12 * h * b);
     chest.position.y = dims.torso / 2;
     this.spine.add(chest);
     if (rand() < 0.3) { // backpack
       const pack = new THREE.Mesh(BOX, mat(pick(TOPS)));
       pack.scale.set(dims.shW * 1.6, dims.torso * 0.75, 0.12);
-      pack.position.set(0, dims.torso * 0.55, -0.065 * h * b - 0.07);
+      pack.position.set(0, dims.torso * 0.55, -0.06 * h * b - 0.07);
       this.spine.add(pack);
     }
 
@@ -104,48 +104,48 @@ export class Body {
     this.head.position.y = 0.105 * h;
     this.neck.add(this.head);
     const head = new THREE.Mesh(HEAD, mat(skin));
-    head.scale.set(0.058 * h, 0.07 * h, 0.064 * h);
+    head.scale.set(0.05 * h, 0.066 * h, 0.058 * h);
     this.head.add(head);
     const hat = rand() < 0.22;
     if (hat || rand() < 0.8) {
       const cap = new THREE.Mesh(CAP, mat(hat ? pick(TOPS) : hair));
-      cap.scale.set(0.062 * h, (hat ? 0.07 : 0.055) * h, 0.068 * h);
+      cap.scale.set(0.054 * h, (hat ? 0.066 : 0.052) * h, 0.062 * h);
       cap.position.set(0, 0.008 * h, -0.004 * h);
       this.head.add(cap);
     }
     // A nose and two eyes, so a glare reads from across the car.
     const nose = new THREE.Mesh(BOX, mat(skin));
     nose.scale.set(0.015 * h, 0.022 * h, 0.02 * h);
-    nose.position.set(0, -0.005 * h, 0.062 * h);
+    nose.position.set(0, -0.005 * h, 0.056 * h);
     this.head.add(nose);
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(BOX, mat('#141018'));
       eye.scale.set(0.014 * h, 0.012 * h, 0.01 * h);
-      eye.position.set(side * 0.022 * h, 0.012 * h, 0.06 * h);
+      eye.position.set(side * 0.019 * h, 0.012 * h, 0.054 * h);
       this.head.add(eye);
     }
 
     this.arms = [1, -1].map((side) => {
       const sh = joint(this.spine, side * dims.shW, dims.torso - 0.03 * h, 0);
-      sh.add(limb(top, 0.035 * h, dims.upper));
+      sh.add(limb(top, 0.028 * h, dims.upper));
       const el = joint(sh, 0, -dims.upper, 0);
-      el.add(limb(top, 0.03 * h, dims.fore));
+      el.add(limb(top, 0.024 * h, dims.fore));
       // A ball reads fine from across the car; the player's own hands are
       // right in front of the camera, so they get a fist instead.
       const hand = new THREE.Mesh(opts.fists ? BOX : HEAD, mat(skin));
       if (opts.fists) hand.scale.set(0.04 * h, 0.05 * h, 0.038 * h);
-      else hand.scale.setScalar(0.03 * h);
+      else hand.scale.setScalar(0.025 * h);
       hand.position.y = -dims.fore - 0.01 * h;
       el.add(hand);
       return { side, sh, el, hand, ik: null };
     });
     this.legs = [1, -1].map((side) => {
       const hip = joint(this.pelvis, side * dims.hipW, -0.02 * h, 0);
-      hip.add(limb(bottom, 0.05 * h, dims.thigh));
+      hip.add(limb(bottom, 0.042 * h, dims.thigh));
       const knee = joint(hip, 0, -dims.thigh, 0);
-      knee.add(limb(bottom, 0.042 * h, dims.shin));
+      knee.add(limb(bottom, 0.035 * h, dims.shin));
       const foot = new THREE.Mesh(BOX, mat(shoe));
-      foot.scale.set(0.06 * h, 0.035 * h, 0.15 * h);
+      foot.scale.set(0.055 * h, 0.035 * h, 0.15 * h);
       foot.position.set(0, -dims.shin - 0.005 * h, 0.035 * h);
       knee.add(foot);
       return { side, hip, knee };

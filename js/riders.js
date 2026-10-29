@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Body } from './body.js';
-import { SEATS, SLOTS, POLES, RAIL_SPOTS, DOOR_Z, RAIL_Y } from './layout.js';
+import { SEATS, SLOTS, POLES, RAIL_SPOTS, DOOR_Z, RAIL_X, RAIL_Y } from './layout.js';
 import { rng } from './ride.js';
 import { sfx } from './sfx.js';
 
@@ -150,13 +150,14 @@ export class Riders {
       r.seekAt = this.range(SEEK_DELAY);
     }
     this.slots.forEach((st) => this.freed(st));
-    // A few people waiting on the platform at Queensboro Plaza board with you.
+    // A few people waiting on the platform at Queensboro Plaza (on the left,
+    // -x) board with you.
     this.boarders = [];
     for (let i = 0; i < 3; i++) {
       const r = this.add(new Body(rand));
       r.mode = 'platform';
-      r.base.set(3 + rand() * 3, 0, DOOR_Z[1 + (i % 2)] + (rand() - 0.5) * 3);
-      r.yaw = -Math.PI / 2;
+      r.base.set(-(3 + rand() * 3), 0, DOOR_Z[1 + (i % 2)] + (rand() - 0.5) * 3);
+      r.yaw = Math.PI / 2;
       r.body.pose('stand');
       r.delay = 1 + i * 1.5 + rand();
       this.boarders.push(r);
@@ -354,12 +355,12 @@ export class Riders {
       if (r.delay > 0) continue;
       // In through the doors, then to a seat if there is one, else the rail.
       const door = nearestDoor(r.base.z);
-      const inside = { x: 0.2, z: door };
+      const inside = { x: -0.2, z: door };
       const seat = this.findSeat({ base: inside, picky: r.picky });
       if (seat) {
         this.seats[seat.id] = r;
         r.seatBound = true;
-        this.walk(r, [{ x: 1.0, z: door }, inside, ...this.aislePath(inside, seat.front), seat], () => {
+        this.walk(r, [{ x: -1.0, z: door }, inside, ...this.aislePath(inside, seat.front), seat], () => {
           r.seatBound = false;
           this.sitAt(r, seat);
         });
@@ -370,7 +371,7 @@ export class Riders {
       this.rails[spot.id] = r;
       r.looked = true;
       r.seekAt = this.time + this.range(SEEK_RETRY);
-      this.walk(r, [{ x: 1.0, z: door }, inside, ...this.aislePath(inside, spot)], () => this.railAt(r, spot));
+      this.walk(r, [{ x: -1.0, z: door }, inside, ...this.aislePath(inside, spot)], () => this.railAt(r, spot));
     }
   }
 
@@ -598,7 +599,7 @@ export class Riders {
       b.lean(r.theta, shake.x * 0.008);
     } else if (r.mode === 'rail') {
       b.pose(r.phone ? 'phone' : 'stand');
-      b.reach(r.hand, _v.set(Math.sign(r.spot.x) * 0.55, RAIL_Y + 0.02, r.base.z + 0.1));
+      b.reach(r.hand, _v.set(Math.sign(r.spot.x) * RAIL_X, RAIL_Y + 0.02, r.base.z + 0.1));
       b.lean(r.theta, shake.x * 0.008);
     } else if (r.mode === 'walk') {
       b.pose(r.wait > 0 ? 'stand' : 'walk');
